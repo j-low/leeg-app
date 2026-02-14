@@ -15,7 +15,7 @@
 **Pipeline concern:** Foundation & infrastructure -- establishing the monorepo structure, dependency management, containerized services, and development workflow that all subsequent pipeline stages depend on.
 
 - [x] **1.1** Initialize Git repository with `.gitignore` (Python venv, `__pycache__`, `.env`, node_modules, Docker volumes, IDE files)
-- [ ] **1.2** Create `README.md` with project overview (name, objective, tech stack summary referencing CLAUDE.PROJECT.MD)
+- [x] **1.2** Create `README.md` with project overview (name, objective, tech stack summary referencing CLAUDE.PROJECT.MD)
 - [ ] **1.3** Set up Python 3.12 virtual environment; create `requirements.txt` with core dependencies: `fastapi`, `uvicorn[standard]`, `pydantic`, `sqlalchemy`, `psycopg2-binary`, `alembic`, `structlog`, `python-dotenv`
 - [ ] **1.4** Create backend project structure:
   ```
