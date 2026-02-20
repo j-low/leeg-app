@@ -7,7 +7,9 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://leeg:leeg@postgres:5432/leeg
+      # Override localhost URLs with Docker container hostnames.
+      # Password comes from ${POSTGRES_PASSWORD} in .env (gitignored).
+      DATABASE_URL: postgresql+asyncpg://leeg:${POSTGRES_PASSWORD}@postgres:5432/leeg
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
     ports:
@@ -24,7 +26,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: leeg
-      POSTGRES_PASSWORD: leeg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: leeg
     volumes:
       - postgres-data:/var/lib/postgresql/data
