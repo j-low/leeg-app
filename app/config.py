@@ -24,8 +24,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://leeg:leeg@localhost:5432/leeg"
 
+    # Auth
+    access_token_expire_minutes: int = 60 * 24  # 24 hours
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/1"
 
     # Twilio
     twilio_account_sid: str = ""
