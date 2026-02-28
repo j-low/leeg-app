@@ -40,7 +40,7 @@
 - [x] **1.6** Create `app/config.py` using Pydantic `BaseSettings` for environment variables (`DATABASE_URL`, `REDIS_URL`, `TWILIO_*`, `OLLAMA_HOST`, `QDRANT_HOST`, `SECRET_KEY`, `DEBUG`)
 - [x] **1.7** Create `.env.example` with all expected environment variables documented
 - [x] **1.8** Create `docker-compose.yml` with initial services: `app` (FastAPI), `postgres` (with volume + healthcheck), `redis` (with healthcheck). Bind appropriate ports; use `.env` for config
-- [ ] **1.9** Verify stack: `docker compose up`, confirm `/health` returns 200, confirm Postgres and Redis are reachable from the app container
+- [x] **1.9** Verify stack: `docker compose up`, confirm `/health` returns 200, confirm Postgres and Redis are reachable from the app container
 - [ ] **1.10** Initialize Next.js frontend in `frontend/` directory with TypeScript (`npx create-next-app@latest frontend --typescript --tailwind --app --src-dir`); verify `npm run dev` works
 
 ---
@@ -505,7 +505,7 @@
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Project Initialization & Skeleton | Not Started |
+| 1 | Project Initialization & Skeleton | In Progress (9/10) |
 | 2 | Data Models & Database | Not Started |
 | 3 | Authentication & API Skeleton | Not Started |
 | 4 | SMS Integration & Inbound Webhook | Not Started |
@@ -520,5 +520,5 @@
 | 13 | Eval Runner (Companion Project) | Not Started |
 
 **Total Steps:** 109
-**Completed:** 0
-**Remaining:** 109
+**Completed:** 9
+**Remaining:** 100
