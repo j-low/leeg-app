@@ -43,6 +43,28 @@ Dashboard (Next.js) ──► FastAPI REST/SSE ──────────┤
                                (entities)     (vectors)     (SMS out)
 ```
 
+## Local Development
+
+```bash
+# Start backing services
+docker compose up postgres redis -d
+
+# Activate venv and run API
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+
+# Run Celery worker (separate terminal)
+celery -A app.tasks.celery_app worker --loglevel=info
+
+# Seed dev data
+python scripts/seed_data.py
+```
+
+To test inbound SMS locally, expose port 8000 via ngrok and point your Twilio
+webhook to `https://<ngrok-id>.ngrok-free.app/sms/webhook`.  Leave
+`TWILIO_ACCOUNT_SID` empty in `.env` to skip signature validation when
+developing without a real Twilio account.
+
 ## Project Status
 
 See [PROJECT_CHECKLIST.md](PROJECT_CHECKLIST.md) for detailed progress.

@@ -21,5 +21,11 @@ python-multipart>=0.0.9,<1.0
 # Rate limiting
 slowapi>=0.1.9,<1.0
 
+# SMS
+twilio>=9.0,<10.0
+
+# Async task queue
+celery[redis]>=5.3,<6.0
+
 # Logging
 structlog>=24.0,<26.0

@@ -95,14 +95,14 @@
 
 **Pipeline concern:** External interface -- Twilio provides the SMS channel that is the primary interaction mode. Webhook signature validation is a security concern; Celery async processing ensures the pipeline doesn't block on slow LLM inference, addressing latency and reliability.
 
-- [ ] **4.1** Add SMS dependencies to `requirements.txt`: `twilio`, `celery[redis]`
-- [ ] **4.2** Create `app/sms.py`: Twilio client wrapper (send_sms, send_group_sms), inbound signature validation utility
-- [ ] **4.3** Create `app/routes/sms.py`: `POST /sms/webhook` endpoint -- validate Twilio signature, extract `from_phone` and `body`, dispatch to Celery task, return TwiML acknowledgment
-- [ ] **4.4** Create `app/tasks.py`: Celery app configuration; `process_inbound_sms` task that calls `run_pipeline()` and sends response via Twilio
-- [ ] **4.5** Add `celery-worker` service to `docker-compose.yml` (uses Redis as broker)
-- [ ] **4.6** Create `app/routes/messaging.py`: captain-initiated endpoints for `POST /api/messages/send` (individual), `POST /api/messages/broadcast` (group), `POST /api/messages/survey` (survey blast)
-- [ ] **4.7** Add Twilio webhook URL configuration notes to `.env.example` and `README.md` (ngrok for local dev)
-- [ ] **4.8** Test: simulate inbound SMS via curl to webhook endpoint, verify Celery task queued and response sent (mock Twilio in tests)
+- [x] **4.1** Add SMS dependencies to `requirements.txt`: `twilio`, `celery[redis]`
+- [x] **4.2** Create `app/sms.py`: Twilio client wrapper (send_sms, send_group_sms), inbound signature validation utility
+- [x] **4.3** Create `app/routes/sms.py`: `POST /sms/webhook` endpoint -- validate Twilio signature, extract `from_phone` and `body`, dispatch to Celery task, return TwiML acknowledgment
+- [x] **4.4** Create `app/tasks.py`: Celery app configuration; `process_inbound_sms` task that calls `run_pipeline()` and sends response via Twilio
+- [x] **4.5** Add `celery-worker` service to `docker-compose.yml` (uses Redis as broker)
+- [x] **4.6** Create `app/routes/messaging.py`: captain-initiated endpoints for `POST /api/messages/send` (individual), `POST /api/messages/broadcast` (group), `POST /api/messages/survey` (survey blast)
+- [x] **4.7** Add Twilio webhook URL configuration notes to `.env.example` and `README.md` (ngrok for local dev)
+- [x] **4.8** Test: simulate inbound SMS via curl to webhook endpoint, verify Celery task queued and response sent (mock Twilio in tests)
 
 ---
 
