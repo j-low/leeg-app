@@ -49,7 +49,7 @@
 
 **Pipeline concern:** Structured data layer -- the entities that the AI pipeline will query, mutate via tool calls, and embed into the vector store for RAG grounding. Proper schema design ensures tool-calling reliability and structured output validation.
 
-- [ ] **2.1** Create SQLAlchemy ORM models in `app/models/`:
+- [x] **2.1** Create SQLAlchemy ORM models in `app/models/`:
   - `team.py`: `Team` table (id, name, captain_id FK, created_at, updated_at)
   - `player.py`: `Player` table (id, name, phone unique, team_id FK, position_prefs JSON array, skill_notes text, sub_flag bool, captain_notes text)
   - `season.py`: `Season` table (id, name, start_date, end_date, status enum[open/closed], created_at)
@@ -60,7 +60,7 @@
   - `player_preference.py`: `PlayerPreference` table (id, player_id FK, position_prefs JSON, ice_time_constraints text, style_notes text, updated_at)
   - `survey.py`: `SurveyResponse` table (id, survey_id, player_id FK, question text, answer text, scope enum[team/season/captain], created_at)
   - `message_log.py`: `MessageLog` table (id, from_phone, to_phones JSON, content text, msg_type enum[reminder/sub_request/survey/blast/system], created_at)
-- [ ] **2.2** Create `app/models/__init__.py` exporting `Base` and all models
+- [x] **2.2** Create `app/models/__init__.py` exporting `Base` and all models
 - [ ] **2.3** Create `app/db.py` with async SQLAlchemy engine, `AsyncSession` factory, `get_db` dependency
 - [ ] **2.4** Initialize Alembic: `alembic init migrations`; configure `alembic.ini` and `migrations/env.py` to use `app.config` and `app.models.Base.metadata`
 - [ ] **2.5** Generate and apply initial migration: `alembic revision --autogenerate -m "initial_tables"` && `alembic upgrade head`
