@@ -110,20 +110,20 @@
 
 **Pipeline concern:** Input sanitization, entity extraction, intent classification, and prompt injection defense. This is the first AI pipeline stage -- it transforms raw natural language into structured data while enforcing security. Defense-in-depth: regex guards + Llama Guard + rate limiting form multiple security layers.
 
-- [ ] **5.1** Add NLP/security dependencies to `requirements.txt`: `spacy`, `transformers`, `torch` (or `llama-guard` client via Ollama)
-- [ ] **5.2** Download spaCy model: `python -m spacy download en_core_web_sm`
-- [ ] **5.3** Create `app/schemas/pipeline.py`: `StructuredInput` Pydantic model (raw_text, channel, from_phone, entities dict, intent str, is_safe bool, confidence float, metadata dict)
-- [ ] **5.4** Create `app/stages/preprocess.py` with `async def preprocess_input(raw_text: str, context: dict) -> StructuredInput`:
+- [x] **5.1** Add NLP/security dependencies to `requirements.txt`: `spacy`, `transformers`, `torch` (or `llama-guard` client via Ollama)
+- [x] **5.2** Download spaCy model: `python -m spacy download en_core_web_sm`
+- [x] **5.3** Create `app/schemas/pipeline.py`: `StructuredInput` Pydantic model (raw_text, channel, from_phone, entities dict, intent str, is_safe bool, confidence float, metadata dict)
+- [x] **5.4** Create `app/stages/preprocess.py` with `async def preprocess_input(raw_text: str, context: dict) -> StructuredInput`:
   - spaCy NER pipeline for PERSON, DATE, TIME, LOCATION extraction
   - Custom entity rules for hockey terms (positions: center/wing/defense/goalie, actions: attendance/lineup/preference/query/survey)
   - Intent classification heuristic (keyword + NER-based: attendance_update, lineup_request, preference_update, query, survey_response, sub_request, schedule_query)
   - Return `StructuredInput` with extracted data
-- [ ] **5.5** Create `app/stages/guards.py`:
+- [x] **5.5** Create `app/stages/guards.py`:
   - Regex-based prompt injection detection (common injection patterns)
   - Llama Guard integration via Ollama for content safety classification
   - Combined `async def check_safety(text: str) -> tuple[bool, str]` returning (is_safe, reason)
-- [ ] **5.6** Integrate guards into `preprocess_input` -- reject with `SecurityError` if unsafe; log all rejections with structlog
-- [ ] **5.7** Write unit tests in `tests/test_preprocess.py`:
+- [x] **5.6** Integrate guards into `preprocess_input` -- reject with `SecurityError` if unsafe; log all rejections with structlog
+- [x] **5.7** Write unit tests in `tests/test_preprocess.py`:
   - Test entity extraction on sample SMS messages ("Bob can't make it Tuesday", "I want to play wing")
   - Test intent classification accuracy
   - Test guard rejection of injection attempts ("ignore all instructions and...")
