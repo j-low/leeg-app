@@ -1,10 +1,15 @@
 # FastAPI app factory, CORS middleware, and /health endpoint
 # See CLAUDE.PROJECT.MD for full architecture
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
+from app.limiter import limiter
+from app.routes import auth, games, lineups, players, seasons, teams
 
 
 def create_app() -> FastAPI:
@@ -16,8 +21,12 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    # CORS: allow Next.js dashboard to call the API.
-    # In production, restrict origins to the deployed frontend URL.
+    # ── Rate limiting (slowapi) ───────────────────────────────────────────
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
+
+    # ── CORS: allow Next.js dashboard to call the API ─────────────────────
     origins = settings.cors_origins_list()
     app.add_middleware(
         CORSMiddleware,
@@ -26,6 +35,23 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # ── Security headers (XSS / MIME / frame protections for JSON API) ────
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+    # ── Routers ───────────────────────────────────────────────────────────
+    app.include_router(auth.router)
+    app.include_router(teams.router)
+    app.include_router(players.router)
+    app.include_router(seasons.router)
+    app.include_router(games.router)
+    app.include_router(lineups.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

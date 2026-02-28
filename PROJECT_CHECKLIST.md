@@ -74,20 +74,20 @@
 
 **Pipeline concern:** Security boundary -- JWT auth protects dashboard/API routes, phone-based gating secures SMS endpoints. This is the first layer of defense-in-depth, ensuring only authorized users can trigger pipeline flows and access data.
 
-- [ ] **3.1** Add auth dependencies to `requirements.txt`: `python-jose[cryptography]`, `passlib[bcrypt]`, `python-multipart`
-- [ ] **3.2** Create `app/auth.py`: JWT token creation/validation utilities, password hashing, `get_current_user` dependency
-- [ ] **3.3** Create `app/models/user.py`: `User` table (id, email unique, hashed_password, phone, is_captain bool, is_active bool, created_at)
-- [ ] **3.4** Create `app/routes/auth.py`: endpoints for `POST /api/auth/register` (captain registration), `POST /api/auth/login` (returns JWT), `GET /api/auth/me` (current user info)
-- [ ] **3.5** Add Alembic migration for the User table
-- [ ] **3.6** Create CRUD API route stubs (protected by JWT) in `app/routes/`:
+- [x] **3.1** Add auth dependencies to `requirements.txt`: `python-jose[cryptography]`, `passlib[bcrypt]`, `python-multipart`
+- [x] **3.2** Create `app/auth.py`: JWT token creation/validation utilities, password hashing, `get_current_user` dependency
+- [x] **3.3** Create `app/models/user.py`: `User` table (id, email unique, hashed_password, phone, is_captain bool, is_active bool, created_at)
+- [x] **3.4** Create `app/routes/auth.py`: endpoints for `POST /api/auth/register` (captain registration), `POST /api/auth/login` (returns JWT), `GET /api/auth/me` (current user info)
+- [x] **3.5** Add Alembic migration for the User table
+- [x] **3.6** Create CRUD API route stubs (protected by JWT) in `app/routes/`:
   - `teams.py`: CRUD for teams + roster management
   - `seasons.py`: CRUD for seasons, link/unlink teams
   - `games.py`: CRUD for games, attendance views
   - `lineups.py`: GET lineup history, POST request AI lineup suggestion
-- [ ] **3.7** Add rate limiting middleware using `slowapi` on all routes (stricter limits on auth endpoints)
-- [ ] **3.8** Add request validation and XSS protection middleware (sanitize inputs)
-- [ ] **3.9** Register all routers in `app/main.py` with appropriate prefixes and tags
-- [ ] **3.10** Test: register a captain, login, obtain JWT, access protected route, verify 401 on unauthenticated access
+- [x] **3.7** Add rate limiting middleware using `slowapi` on all routes (stricter limits on auth endpoints)
+- [x] **3.8** Add request validation and XSS protection middleware (sanitize inputs)
+- [x] **3.9** Register all routers in `app/main.py` with appropriate prefixes and tags
+- [x] **3.10** Test: register a captain, login, obtain JWT, access protected route, verify 401 on unauthenticated access
 
 ---
 
