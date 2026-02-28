@@ -1,7 +1,6 @@
 # Pydantic Settings for environment variable management
 # Populated via .env file or environment
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -11,15 +10,12 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     secret_key: str = "change-me-in-production"
-    # Comma-separated list of allowed CORS origins, e.g. "http://localhost:3000,https://app.leeg.com"
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # Comma-separated origins, e.g. "http://localhost:3000,https://app.leeg.com"
+    # Stored as str to avoid pydantic-settings JSON-parsing a plain URL value.
+    cors_origins: str = "http://localhost:3000"
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str | list) -> list[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",")]
 
     # Database
     database_url: str = "postgresql+asyncpg://leeg:leeg@localhost:5432/leeg"

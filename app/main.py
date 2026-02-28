@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
 
     # CORS: allow Next.js dashboard to call the API.
     # In production, restrict origins to the deployed frontend URL.
-    origins = settings.cors_origins if settings.cors_origins else ["http://localhost:3000"]
+    origins = settings.cors_origins_list()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,

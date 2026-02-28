@@ -39,7 +39,7 @@
 - [x] **1.5** Create `app/main.py` with FastAPI app, `/health` endpoint returning `{"status": "ok"}`, basic CORS middleware
 - [x] **1.6** Create `app/config.py` using Pydantic `BaseSettings` for environment variables (`DATABASE_URL`, `REDIS_URL`, `TWILIO_*`, `OLLAMA_HOST`, `QDRANT_HOST`, `SECRET_KEY`, `DEBUG`)
 - [x] **1.7** Create `.env.example` with all expected environment variables documented
-- [ ] **1.8** Create `docker-compose.yml` with initial services: `app` (FastAPI), `postgres` (with volume + healthcheck), `redis` (with healthcheck). Bind appropriate ports; use `.env` for config
+- [x] **1.8** Create `docker-compose.yml` with initial services: `app` (FastAPI), `postgres` (with volume + healthcheck), `redis` (with healthcheck). Bind appropriate ports; use `.env` for config
 - [ ] **1.9** Verify stack: `docker compose up`, confirm `/health` returns 200, confirm Postgres and Redis are reachable from the app container
 - [ ] **1.10** Initialize Next.js frontend in `frontend/` directory with TypeScript (`npx create-next-app@latest frontend --typescript --tailwind --app --src-dir`); verify `npm run dev` works
 
@@ -261,12 +261,20 @@
   - Pipeline performance dashboard (stage latencies, error rates, throughput)
   - LLM usage dashboard (token counts, cache hit rates, model latency)
   - System health dashboard (container resources, DB connections, queue depth)
-- [ ] **9.7** Write integration tests in `tests/test_pipeline.py`:
+- [ ] **9.7** Expose a dedicated eval-friendly pipeline endpoint in `app/routes/pipeline.py`:
+  - `POST /api/pipeline/run` (JWT-protected, captain/admin only): accepts `{"input": str, "context": dict}`, runs the full pipeline, returns structured response **plus** a `pipeline_trace` block containing: stage-by-stage latencies, cache hit/miss per stage, token counts, guard decisions, retrieval chunk count and scores, and the raw LLM output before post-processing. This is the clean API contract the eval runner (Phase 13) will target.
+  - `POST /api/pipeline/run-batch` (admin only): accepts an array of `{input, context}` objects (max 50), runs each through the pipeline sequentially, returns an array of traced responses. Used for bulk eval test-set runs without needing a live UI.
+  - Both endpoints must bypass Celery (synchronous, direct call to `run_pipeline`) so the eval runner gets a blocking response rather than a task ID.
+  - Add these routes to `app/main.py` under an `/api/pipeline` prefix.
+- [ ] **9.8** Ensure `run_pipeline()` emits a structured `PipelineTrace` Pydantic model (alongside the final response) capturing: `stage_timings: dict[str, float]`, `cache_hits: dict[str, bool]`, `guard_result: dict`, `rag_chunks_retrieved: int`, `rag_chunks_after_rerank: int`, `rag_top_scores: list[float]`, `llm_tokens_prompt: int`, `llm_tokens_completion: int`, `raw_llm_output: str`, `postprocess_mutations: list[str]` (list of what PII/validation changes were made). This trace is returned by the `/api/pipeline/run` endpoint and logged to structlog for Loki ingestion.
+- [ ] **9.9** Write integration tests in `tests/test_pipeline.py`:
   - Test full pipeline end-to-end with mocked LLM
   - Test timeout behavior per stage
   - Test retry logic on transient failures
   - Test cache hit/miss paths
   - Verify OpenTelemetry spans are created
+  - Test `/api/pipeline/run` returns valid `PipelineTrace` with all required fields
+  - Test `/api/pipeline/run-batch` processes multiple inputs and returns array of traces
 
 ---
 
@@ -345,6 +353,8 @@
 
 **Pipeline concern:** Verification of the entire system -- unit tests validate individual components, integration tests validate stage interactions, end-to-end tests validate real user workflows, and load tests validate performance under concurrent usage. Ensures the pipeline is reliable and performant.
 
+> **Note:** Systematic LLM output quality evaluation (LLM-as-judge, test-set scoring, regression tracking) is intentionally out of scope for this project and lives in the companion eval runner described in Phase 13. The tests here cover functional correctness and pipeline behavior, not model output quality.
+
 - [ ] **11.1** Write comprehensive unit tests for each pipeline stage:
   - `tests/test_preprocess.py`: entity extraction, intent classification, guard detection (min 15 test cases)
   - `tests/test_rag.py`: embedding, retrieval, re-ranking, compression (min 10 test cases)
@@ -407,6 +417,90 @@
 
 ---
 
+---
+
+## Phase 13 - Eval Runner (Companion Project)
+
+**Pipeline concern:** LLM output quality evaluation -- this phase establishes a *separate companion project* (`leeg-eval/`) that treats the Leeg app as a black box and evaluates pipeline output quality systematically. This separation is intentional and reflects how eval should be structured in real client work: the eval system is a tool you bring to any AI pipeline, not something baked into the app itself.
+
+> **Prerequisite:** Phase 9 must be complete (specifically steps 9.7 and 9.8) so that the `/api/pipeline/run` and `/api/pipeline/run-batch` endpoints are available with full `PipelineTrace` responses.
+
+> **Why a separate project:** The eval runner has different dependencies, different lifecycle (run on demand, not in production), and different concerns than the app. Keeping it separate also makes it reusable -- you can point it at any pipeline that exposes a compatible endpoint contract.
+
+- [ ] **13.1** Initialize a new sibling repo `leeg-eval/` (separate from the main `leeg/` repo):
+  - Python 3.12 venv, `requirements.txt`: `httpx`, `pytest`, `pytest-asyncio`, `pydantic`, `structlog`, `rich`, `pandas`, `openai` (for LLM-as-judge calls to a frontier model), `jinja2`, `python-dotenv`
+  - `.env.example`: `LEEG_API_URL` (points to running Leeg app), `LEEG_API_TOKEN` (admin JWT), `JUDGE_MODEL` (e.g. `gpt-4o-mini` or `claude-haiku`), `JUDGE_API_KEY`
+  - Directory structure:
+    ```
+    leeg-eval/
+      test_sets/         # JSONL files of {input, context, expected_intent, tags[]}
+      judges/            # Judge prompt templates per evaluation dimension
+      runners/
+        batch_runner.py  # Sends test set to /api/pipeline/run-batch, collects traces
+        single_runner.py # Interactive single-input runner for debugging
+      scorers/
+        llm_judge.py     # LLM-as-judge scoring against rubric
+        deterministic.py # Rule-based checks (PII present?, response within length?, guard fired correctly?)
+      reports/
+        reporter.py      # Aggregate scores, render pass/fail table, save results to JSONL
+      conftest.py
+      run_eval.py        # CLI entrypoint: python run_eval.py --test-set test_sets/sms_flows.jsonl
+    ```
+
+- [ ] **13.2** Build the test set for SMS intent flows in `test_sets/sms_flows.jsonl`:
+  - Minimum 30 test cases as JSONL, each with: `input` (raw SMS text), `context` (channel, from_phone), `expected_intent`, `expected_action` (e.g. attendance_update), `tags` (happy_path / edge_case / adversarial / security), `notes`
+  - Include: happy path attendance updates, ambiguous inputs, out-of-scope messages, injection attempts (should trigger guard), player preference updates, lineup requests
+  - Include 5+ adversarial cases specifically targeting the prompt injection guard (these should be *rejected* by the pipeline -- a correct guard rejection is a passing score)
+
+- [ ] **13.3** Build the test set for lineup suggestion flows in `test_sets/lineup_flows.jsonl`:
+  - Minimum 15 test cases covering: balanced line requests, short-bench scenarios (< 12 skaters), goalie-absent scenarios, specific player exclusion requests, conflicting preference edge cases
+  - Each case includes a `scoring_rubric` field with the specific criteria the judge should evaluate against (e.g. "lineup should respect position_prefs where possible", "explanation should cite specific player attributes")
+
+- [ ] **13.4** Build the LLM-as-judge scorer in `scorers/llm_judge.py`:
+  - Accepts: `pipeline_input`, `pipeline_output`, `pipeline_trace`, `scoring_rubric`
+  - Calls the judge model with a structured prompt asking it to score on: **accuracy** (did it do the right thing?), **groundedness** (is the response supported by retrieved context, not hallucinated?), **safety** (no PII leaked, appropriate refusals), **format** (SMS-appropriate length and tone)
+  - Returns: `EvalResult` Pydantic model with per-dimension scores (0-1 float), pass/fail bool, and `reasoning` string from the judge
+  - Use structured output (JSON mode) for the judge call so scores are parseable
+
+- [ ] **13.5** Build deterministic checkers in `scorers/deterministic.py`:
+  - `check_no_pii_in_output(output: str) -> bool`: run Presidio on the pipeline output, fail if PII detected
+  - `check_guard_fired_correctly(trace: PipelineTrace, expected_safe: bool) -> bool`: compare guard decision in trace to expectation
+  - `check_response_length(output: str, channel: str) -> bool`: fail if SMS output > 1600 chars
+  - `check_intent_match(trace: PipelineTrace, expected_intent: str) -> bool`: check extracted intent matches expected
+  - These run on every test case without LLM calls -- fast, free, and catch obvious failures before spending tokens on judge calls
+
+- [ ] **13.6** Build the batch runner in `runners/batch_runner.py`:
+  - Load test set JSONL, send to `/api/pipeline/run-batch`, collect responses + traces
+  - Run deterministic checks on all results first
+  - Run LLM judge on results that passed deterministic checks (avoids burning judge tokens on obviously broken outputs)
+  - Aggregate into a results list
+
+- [ ] **13.7** Build the reporter in `reports/reporter.py`:
+  - Aggregate pass rates per dimension (accuracy, groundedness, safety, format)
+  - Aggregate pass rates per tag (happy_path, edge_case, adversarial, security)
+  - Render a rich terminal table using `rich`
+  - Save full results to a timestamped JSONL file in `reports/runs/`
+  - Print a single-line summary: `PASS_RATE: 87% | accuracy: 91% | groundedness: 84% | safety: 100% | format: 96% | (30/30 cases evaluated)`
+
+- [ ] **13.8** Wire up the CLI entrypoint `run_eval.py`:
+  - `python run_eval.py --test-set test_sets/sms_flows.jsonl` runs the full eval loop and prints the report
+  - `python run_eval.py --input "Bob is out Tuesday" --context '{"channel":"sms"}' --debug` runs a single input and prints the full trace + judge reasoning for debugging
+  - `python run_eval.py --compare runs/2024-01-01.jsonl runs/2024-01-15.jsonl` diffs two run reports to show score changes (regression detection)
+
+- [ ] **13.9** Validate the eval runner end-to-end:
+  - Start the Leeg app locally, obtain an admin JWT
+  - Run `python run_eval.py --test-set test_sets/sms_flows.jsonl`
+  - Verify: scores are plausible, adversarial cases show guard firing correctly, report renders cleanly
+  - Intentionally break something in the pipeline (e.g. disable PII redaction) and verify the eval catches it
+
+- [ ] **13.10** Document in `leeg-eval/README.md`:
+  - What the eval runner does and how it relates to the main app
+  - How to add new test cases
+  - How to interpret scores and diagnose failures using the trace output
+  - How to run a regression comparison before/after a pipeline change
+
+---
+
 ## Progress Summary
 
 | Phase | Description | Status |
@@ -423,7 +517,8 @@
 | 10 | Web Dashboard & Streaming | Not Started |
 | 11 | Testing & Quality Assurance | Not Started |
 | 12 | Deployment Readiness & CI | Not Started |
+| 13 | Eval Runner (Companion Project) | Not Started |
 
-**Total Steps:** 97
+**Total Steps:** 109
 **Completed:** 0
-**Remaining:** 97
+**Remaining:** 109
