@@ -70,3 +70,39 @@ def process_inbound_sms(self, from_phone: str, body: str) -> None:
         send_sms(to=from_phone, body=response_text)
 
     log.info("task.process_inbound_sms.done", from_phone=from_phone)
+
+
+@celery_app.task(
+    name="leeg.reingest_team_data",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def reingest_team_data(self, team_id: int) -> dict:
+    """Re-embed and upsert a team's documents into Qdrant after a DB write.
+
+    Called automatically after roster changes, game creation, or preference
+    updates so the RAG vector store stays in sync with Postgres.
+
+    Args:
+        team_id: The team whose data should be re-ingested.
+
+    Returns:
+        Summary dict from ingest_team_data: {doc_type: count_upserted}.
+    """
+    from app.db import async_session
+    from app.rag.ingestion import ingest_team_data
+
+    log.info("task.reingest_team_data.start", team_id=team_id)
+
+    async def _run() -> dict:
+        async with async_session() as db:
+            return await ingest_team_data(team_id, db)
+
+    try:
+        summary = asyncio.run(_run())
+        log.info("task.reingest_team_data.done", team_id=team_id, summary=summary)
+        return summary
+    except Exception as exc:
+        log.error("task.reingest_team_data.error", team_id=team_id, exc=str(exc))
+        raise self.retry(exc=exc)

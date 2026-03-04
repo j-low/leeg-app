@@ -135,27 +135,27 @@
 
 **Pipeline concern:** Grounding LLM responses in factual, team-specific data. Hybrid search (dense + sparse vectors) ensures recall; re-ranking improves precision; compression reduces token cost; Redis caching avoids redundant embedding/retrieval calls. This addresses hallucination prevention, cost control, and response quality.
 
-- [ ] **6.1** Add RAG dependencies to `requirements.txt`: `qdrant-client`, `sentence-transformers`, `langchain-text-splitters`, `llmlingua` (or `pyllmlingua`)
-- [ ] **6.2** Add `qdrant` service to `docker-compose.yml` (port 6333, with volume)
-- [ ] **6.3** Create `app/rag/embeddings.py`: embedding utility using `sentence-transformers` with `nomic-embed-text-v1.5` (or `all-MiniLM-L6-v2` as fallback). Batch embed function with Redis caching of embeddings
-- [ ] **6.4** Create `app/rag/ingestion.py`:
+- [x] **6.1** Add RAG dependencies to `requirements.txt`: `qdrant-client`, `sentence-transformers`, `langchain-text-splitters`, `llmlingua` (or `pyllmlingua`)
+- [x] **6.2** Add `qdrant` service to `docker-compose.yml` (port 6333, with volume)
+- [x] **6.3** Create `app/rag/embeddings.py`: embedding utility using `sentence-transformers` with `nomic-embed-text-v1.5` (or `all-MiniLM-L6-v2` as fallback). Batch embed function with Redis caching of embeddings
+- [x] **6.4** Create `app/rag/ingestion.py`:
   - Chunk entities from Postgres into text documents (roster details, game history, player preferences, past lineups, survey responses)
   - Use `RecursiveCharacterTextSplitter` (chunk_size=512, overlap=50)
   - Embed and upsert to Qdrant collection `leeg_docs` with metadata filters (team_id, season_id, doc_type, last_updated)
   - Incremental upsert: track `last_updated` to avoid re-embedding unchanged data
-- [ ] **6.5** Create `app/rag/retriever.py`:
+- [x] **6.5** Create `app/rag/retriever.py`:
   - `async def retrieve(query: str, context: dict, top_k: int = 10) -> list[dict]`
   - Qdrant hybrid search (dense + sparse vectors with fusion)
   - Metadata filtering by team_id, season_id from context
   - Redis cache layer: cache query hash -> results with TTL
-- [ ] **6.6** Create `app/rag/reranker.py`: re-rank retrieved chunks using cross-encoder (`BAAI/bge-reranker-v2-m3` or lighter model); return top-k after re-ranking
-- [ ] **6.7** Create `app/stages/rag.py`:
+- [x] **6.6** Create `app/rag/reranker.py`: re-rank retrieved chunks using cross-encoder (`BAAI/bge-reranker-v2-m3` or lighter model); return top-k after re-ranking
+- [x] **6.7** Create `app/stages/rag.py`:
   - `async def retrieve_context(structured_input: StructuredInput, context: dict) -> list[dict]`
   - Calls retriever, re-ranker, then applies LLMLingua compression to reduce token count
   - Returns compressed, relevant context chunks
-- [ ] **6.8** Write a one-time ingestion script `scripts/ingest_to_qdrant.py` that reads from Postgres and populates Qdrant
-- [ ] **6.9** Create Celery task for incremental re-ingestion triggered on DB writes (roster changes, new games, etc.)
-- [ ] **6.10** Write tests in `tests/test_rag.py`:
+- [x] **6.8** Write a one-time ingestion script `scripts/ingest_to_qdrant.py` that reads from Postgres and populates Qdrant
+- [x] **6.9** Create Celery task for incremental re-ingestion triggered on DB writes (roster changes, new games, etc.)
+- [x] **6.10** Write tests in `tests/test_rag.py`:
   - Test embedding generation and caching
   - Test ingestion pipeline (mock Qdrant)
   - Test retrieval with metadata filters
@@ -501,16 +501,122 @@
 
 ---
 
+## Phase 14 - Optimization Lab (Companion Project, extends leeg-eval/)
+
+**Pipeline concern:** Systematic pipeline optimization -- this phase adds a structured experimentation layer to `leeg-eval/` that surveys every major optimization modality: prompt engineering, retrieval tuning, context management, guard calibration, and inference cost/performance tradeoffs. The core mechanic is a lightweight experiment tracker that tags each eval run with the parameter values that produced it, enabling before/after comparison and causal attribution of score changes.
+
+> **Prerequisite:** Phase 13 must be complete. The optimization lab is built on top of the eval runner -- you optimize by running evals, changing a lever, and re-evaluating.
+
+> **Design principle:** Each optimization modality is isolated. You change one family of parameters at a time, run the full test set, and compare. This is the same discipline as controlled experimentation in statistics -- you already think this way.
+
+- [ ] **14.1** Add experiment tracking infrastructure to `leeg-eval/`:
+  - Add dependencies to `requirements.txt`: `mlflow` (lightweight local experiment tracking)
+  - Extend the directory structure:
+    ```
+    leeg-eval/
+      experiments/
+        configs/           # YAML files defining parameter variants per experiment
+          prompt_variants/
+          retrieval_variants/
+          context_variants/
+          guard_variants/
+          inference_variants/
+        results/           # MLflow tracking store (local)
+      optimizers/
+        experiment_runner.py  # Loads config, runs eval, logs params + metrics to MLflow
+        comparator.py         # Compare two or more experiment runs, surface winning config
+    ```
+  - Initialize MLflow local tracking store: `mlflow.set_tracking_uri("experiments/results")`
+  - Each experiment run logs: all parameter values as MLflow params, all eval scores as MLflow metrics, run timestamp and test set used as tags
+
+- [ ] **14.2** Implement Experiment 1 — **Prompt Optimization**:
+  - Create `experiments/configs/prompt_variants/` with 4 YAML configs varying:
+    - System prompt verbosity (terse vs. detailed instructions)
+    - Few-shot examples (0-shot vs. 3-shot with hockey-domain examples)
+    - Output format instructions (explicit JSON schema in prompt vs. implicit)
+    - Instruction ordering (role first vs. constraints first vs. examples first)
+  - For each variant: the config specifies which prompt template file to use; `experiment_runner.py` swaps the template, runs the full SMS + lineup test sets, logs results
+  - Expected learning: prompts are hyperparameters; instruction ordering and few-shot examples measurably affect accuracy and format scores
+  - Document findings in `experiments/configs/prompt_variants/FINDINGS.md`: which variant won, by how much, and the hypothesis for why
+
+- [ ] **14.3** Implement Experiment 2 — **Retrieval Optimization**:
+  - Create `experiments/configs/retrieval_variants/` with configs varying:
+    - Chunk size: 256 / 512 / 1024 tokens
+    - Chunk overlap: 0 / 50 / 100 tokens
+    - Top-k retrieved before reranking: 5 / 10 / 20
+    - Reranking threshold: vary the score cutoff below which chunks are dropped
+    - Hybrid search weight: dense-only / 70-30 dense-sparse / 50-50
+  - Each variant requires re-ingesting to Qdrant with new chunk settings -- `experiment_runner.py` should call the ingestion script with the specified params before running eval
+  - Track an additional metric per run: `avg_chunks_used` (from `PipelineTrace.rag_chunks_after_rerank`) -- this captures the cost/quality tradeoff directly
+  - Expected learning: chunk size and top-k have the largest effect on groundedness; hybrid weighting matters more for ambiguous queries than precise ones
+  - Document findings in `FINDINGS.md`
+
+- [ ] **14.4** Implement Experiment 3 — **Context & Compression Optimization**:
+  - Create `experiments/configs/context_variants/` with configs varying:
+    - LLMLingua compression ratio: 0.5 / 0.7 / 0.9 (1.0 = no compression)
+    - Context ordering: retrieved chunks in score order vs. reversed vs. most-relevant first and last (lost-in-the-middle mitigation)
+    - Max context tokens passed to LLM: 512 / 1024 / 2048
+  - Track additional metrics: `avg_prompt_tokens` and `avg_completion_tokens` from `PipelineTrace` -- this makes the cost/quality tradeoff visible as actual numbers
+  - Expected learning: aggressive compression degrades groundedness measurably; context ordering has a real but smaller effect; the prompt token count is a direct cost proxy
+  - Document findings in `FINDINGS.md`
+
+- [ ] **14.5** Implement Experiment 4 — **Guard Calibration**:
+  - Create `experiments/configs/guard_variants/` with configs varying:
+    - Llama Guard sensitivity threshold (if configurable): strict / balanced / permissive
+    - Regex rule set: minimal (obvious injections only) / standard / aggressive (broader patterns)
+    - Guard ordering: regex-first-then-LLamaGuard (current) vs. LlamaGuard-only vs. regex-only
+  - This experiment requires a dedicated test set: `test_sets/security_flows.jsonl` with minimum 20 cases -- 10 genuine injection attempts (should be rejected), 10 legitimate edge-case messages that could trigger false positives (should pass)
+  - Track two competing metrics: `true_positive_rate` (injections correctly caught) and `false_positive_rate` (legitimate messages incorrectly rejected) -- the tension between these is the calibration problem
+  - Expected learning: guard tuning is a precision/recall tradeoff, not a single dial; regex catches cheap obvious cases; LlamaGuard handles sophisticated attempts but adds latency
+  - Document findings in `FINDINGS.md`
+
+- [ ] **14.6** Implement Experiment 5 — **Inference Cost/Performance Optimization**:
+  - Create `experiments/configs/inference_variants/` with configs varying:
+    - Temperature: 0.0 / 0.3 / 0.7 (affects determinism and response variety)
+    - Max tokens: 256 / 512 / 1024 (output length cap)
+    - Quantization level: compare Q4 vs Q5 vs Q8 GGUF variants if available via Ollama
+    - Redis cache TTL for full pipeline results: 30s / 60s / 300s
+  - Track latency metrics from `PipelineTrace.stage_timings`: `p50_latency_ms`, `p95_latency_ms` per stage, total end-to-end
+  - Track cost proxy: `total_tokens_per_run` = sum of all `llm_tokens_prompt + llm_tokens_completion` across test set
+  - Expected learning: temperature 0.0 improves format consistency but can make lineup suggestions feel mechanical; Q4 vs Q5 quality delta is measurable on groundedness; cache TTL is a pure cost lever with no quality effect
+  - Document findings in `FINDINGS.md`
+
+- [ ] **14.7** Build the comparator in `optimizers/comparator.py`:
+  - `python compare.py --experiments prompt_exp_1 prompt_exp_2 prompt_exp_3` queries MLflow for the named runs and renders a comparison table showing: each parameter value, each metric score, delta vs. baseline, and a winning configuration recommendation
+  - `python compare.py --best --metric groundedness` queries all runs across all experiments and returns the single configuration with the highest groundedness score
+  - `python compare.py --pareto --metrics groundedness,avg_prompt_tokens` renders a simple Pareto frontier: configurations that are not dominated on both quality and cost simultaneously
+  - The Pareto command is the most important one to understand -- it surfaces the real optimization question, which is never "maximize quality" in isolation but "find the best quality achievable within a cost constraint"
+
+- [ ] **14.8** Build a combined "best config" assembler:
+  - After running all five experiment families, create `experiments/configs/optimized.yaml` that assembles the winning parameter from each experiment into a single combined configuration
+  - Run a final eval pass with the combined config and compare to the original baseline config
+  - Document the total score improvement and cost change in `experiments/OPTIMIZATION_SUMMARY.md`: a narrative of what you changed, what moved, and what the optimized pipeline looks like vs. the original
+  - This document is the artifact you'd show a client or include in a portfolio -- it demonstrates not just that you built the pipeline but that you can systematically improve it
+
+- [ ] **14.9** Extend the CLI in `run_eval.py` with optimization commands:
+  - `python run_eval.py --experiment experiments/configs/prompt_variants/few_shot.yaml` runs a single experiment config and logs to MLflow
+  - `python run_eval.py --run-all-experiments` runs every config in every `experiments/configs/` subdirectory sequentially and logs all results
+  - `python run_eval.py --mlflow-ui` launches the MLflow local UI (`mlflow ui`) so results can be browsed visually -- this is the dashboard experience for the optimization workflow
+
+- [ ] **14.10** Document in `leeg-eval/OPTIMIZATION.md`:
+  - The five optimization modalities and what levers exist in each
+  - How to add a new experiment config and what fields are required
+  - How to interpret the MLflow UI and the comparator output
+  - A decision tree for which modality to try first when eval scores are low (suggested order: prompt → retrieval → context → guard → inference)
+  - A note on interaction effects: why you optimize one modality at a time and why the combined config in 14.8 may not be the simple sum of individual wins
+
+---
+
 ## Progress Summary
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Project Initialization & Skeleton | Complete |
-| 2 | Data Models & Database | Not Started |
-| 3 | Authentication & API Skeleton | Not Started |
-| 4 | SMS Integration & Inbound Webhook | Not Started |
-| 5 | Stage 1: Preprocessing & Security | Not Started |
-| 6 | Stage 2: Hybrid RAG | Not Started |
+| 2 | Data Models & Database | Complete |
+| 3 | Authentication & API Skeleton | Complete |
+| 4 | SMS Integration & Inbound Webhook | Complete |
+| 5 | Stage 1: Preprocessing & Security | Complete |
+| 6 | Stage 2: Hybrid RAG | Complete |
 | 7 | Stage 3: Generation & Agentic Loops | Not Started |
 | 8 | Stage 4: Post-Processing | Not Started |
 | 9 | Pipeline Orchestration & Observability | Not Started |
@@ -518,7 +624,8 @@
 | 11 | Testing & Quality Assurance | Not Started |
 | 12 | Deployment Readiness & CI | Not Started |
 | 13 | Eval Runner (Companion Project) | Not Started |
+| 14 | Optimization Lab (Companion Project) | Not Started |
 
-**Total Steps:** 109
-**Completed:** 10
-**Remaining:** 99
+**Total Steps:** 121
+**Completed:** 53
+**Remaining:** 68

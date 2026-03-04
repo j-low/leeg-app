@@ -12,12 +12,15 @@ services:
       DATABASE_URL: postgresql+asyncpg://leeg:${POSTGRES_PASSWORD}@postgres:5432/leeg
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
+      QDRANT_HOST: qdrant
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     restart: unless-stopped
 
@@ -32,10 +35,13 @@ services:
       DATABASE_URL: postgresql+asyncpg://leeg:${POSTGRES_PASSWORD}@postgres:5432/leeg
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
+      QDRANT_HOST: qdrant
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     restart: unless-stopped
 
@@ -71,7 +77,23 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # ── Qdrant vector database ─────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 # ── Named volumes ──────────────────────────────────────────────────────────
 volumes:
   postgres-data:
   redis-data:
+  qdrant-data:
