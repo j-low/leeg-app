@@ -208,25 +208,23 @@
 
 **Pipeline concern:** Output validation, PII redaction, and response formatting. Ensures LLM outputs conform to expected schemas (structured output enforcement), removes any PII that leaked through (defense-in-depth for privacy), and formats responses appropriately for SMS vs. dashboard channels.
 
-- [ ] **8.1** Add post-processing dependencies to `requirements.txt`: `presidio-analyzer`, `presidio-anonymizer`
-- [ ] **8.2** Create `app/stages/postprocess.py`:
-  - `async def postprocess(raw_output: dict, context: dict) -> dict`
-  - Pydantic validation of LLM output against expected response schemas
-  - Fallback formatting if validation fails (graceful degradation)
-- [ ] **8.3** Create `app/stages/pii.py`:
-  - Initialize Presidio analyzer with relevant entity recognizers (PHONE_NUMBER, PERSON, EMAIL, etc.)
-  - `async def redact_pii(text: str) -> str` -- detect and mask PII in outbound text
-  - Custom recognizer for hockey-context names (captain notes should not leak player names to other players)
-- [ ] **8.4** Integrate PII redaction into postprocess pipeline (redact before sending to any external channel)
-- [ ] **8.5** Add response formatter:
-  - SMS channel: truncate to 1600 chars (Twilio limit), plain text, actionable language
-  - Dashboard channel: structured JSON with explanation fields, supports rich formatting
-- [ ] **8.6** Add audit logging: log every pipeline output (redacted version) with structlog for compliance trail
-- [ ] **8.7** Write tests in `tests/test_postprocess.py`:
-  - Test PII detection and redaction on sample outputs
-  - Test schema validation catches malformed LLM output
-  - Test SMS formatting respects character limits
-  - Test audit log entries are created
+- [x] **8.1** Add post-processing dependencies to `requirements.txt`: `presidio-analyzer>=2.2,<3.0`, `presidio-anonymizer>=2.2,<3.0` (reuse existing spacy `en_core_web_sm`)
+- [x] **8.2** Add `PostprocessedResponse` Pydantic model to `app/schemas/pipeline.py` (alongside `StructuredInput`); fields: `text_for_user`, `channel`, `mutations`, `pii_detected`, `was_truncated`, `tool_calls`, `iterations`, `stop_reason`, `dashboard_payload`
+- [x] **8.3** Create `app/stages/postprocess/pii.py`:
+  - Module-level singletons: `_analyzer` (AnalyzerEngine) and `_anonymizer` (AnonymizerEngine) built once at import via `_build_analyzer()` (same singleton pattern as `_build_nlp()` in preprocess)
+  - `async def redact_pii(text, extra_names) -> tuple[str, bool]` — wraps sync Presidio calls in `asyncio.to_thread()`; fail-open on any exception
+  - Standard entities: `PHONE_NUMBER`, `EMAIL_ADDRESS`, `PERSON`
+  - Custom `_HockeyCaptainNoteRecognizer(PatternRecognizer)` catches leaked captain note patterns as defense-in-depth
+  - `extra_names` param: word-boundary regex replacement for roster-aware player name suppression
+- [x] **8.4** Create `app/stages/postprocess/formatter.py`:
+  - `format_for_sms(text) -> tuple[str, bool]`: GSM-7 normalization (curly quotes/em-dashes → ASCII), soft limit 160 chars, hard limit 1600 chars (truncate via `textwrap.shorten`)
+  - `format_for_dashboard(text, raw_output) -> tuple[str, dict]`: no length limit; returns structured `dashboard_payload` with `answer`, `tool_calls`, `iterations`, `stop_reason`
+- [x] **8.5** Create `app/stages/postprocess/postprocess.py` — orchestrator: validate → redact PII → format (SMS or dashboard) → structlog audit log → return `PostprocessedResponse`; entire body wrapped in `try/except`, never raises; never logs `text_for_user` in full (only `output_len`)
+- [x] **8.6** Create `app/stages/postprocess/__init__.py` with re-exports: `postprocess`, `PostprocessedResponse`, `redact_pii`, `format_for_sms`, `format_for_dashboard`, `SMS_SOFT_LIMIT`, `SMS_HARD_LIMIT`
+- [x] **8.7** Write tests in `tests/test_postprocess.py` (15 tests, 3 classes, all Presidio mocked):
+  - `TestPiiRedaction` (5): phone/email redacted, clean text passes through, extra_names suppression, Presidio exception fails open
+  - `TestFormatter` (4): short SMS unchanged, >1600 truncated, smart quotes normalized, dashboard payload structure
+  - `TestPostprocess` (6): happy path SMS/dashboard, PII detected, empty answer fallback, exception fallback, audit log emitted
 
 ---
 
@@ -247,14 +245,29 @@
   - Prometheus metrics: `pipeline_duration_seconds` (histogram), `pipeline_stage_duration_seconds` (histogram by stage), `pipeline_errors_total` (counter by stage), `llm_tokens_total` (counter), `cache_hit_ratio` (gauge)
   - Structlog configuration: JSON format, output to stdout (collected by Loki)
 - [ ] **9.4** Instrument FastAPI app with OpenTelemetry auto-instrumentation
-- [ ] **9.5** Complete `app/pipeline.py` -- `async def run_pipeline(raw_input: str, context: dict) -> dict`:
-  - Chain: `preprocess_input` -> `check_safety` -> `retrieve_context` -> `generate_response` (agent loop) -> `postprocess`
-  - Wrap each stage in OpenTelemetry span with attributes (intent, entity count, cache_hit, etc.)
-  - `asyncio.timeout` per stage (preprocess: 5s, rag: 10s, generate: 120s, postprocess: 5s)
-  - Retry logic: 1 retry on transient failures (LLM timeout, Qdrant connection)
-  - Redis caching: cache full pipeline results for identical inputs (short TTL: 60s)
-  - Error handling: graceful fallbacks per stage (e.g., skip RAG if Qdrant down, use simpler response)
-  - Emit metrics at each stage transition
+- [ ] **9.5** Complete `app/pipeline.py` with channel-aware dual-mode execution. Channel (`"sms"` or `"dashboard"`) is read from `context["channel"]` and determines which execution path is taken. **Eval always uses the batch path.**
+  - **Batch path** — `async def run_pipeline(raw_input: str, context: dict) -> PostprocessedResponse`:
+    - Used by: SMS inbound webhook, `/api/pipeline/run` eval endpoint
+    - Chain: `preprocess` → `retrieve_context` → `run_agent()` → `postprocess()`
+    - `asyncio.timeout` per stage (preprocess: 5s, rag: 10s, generate: 120s, postprocess: 5s)
+    - Retry logic: 1 retry on transient LLM/Qdrant failures
+    - Redis caching: cache full pipeline result for identical inputs (TTL: 60s)
+    - Returns complete `PostprocessedResponse` (PII-redacted, formatted)
+    - Wrap each stage in OpenTelemetry span; emit Prometheus metrics at each stage transition
+  - **Streaming path** — `async def run_pipeline_stream(raw_input: str, context: dict) -> AsyncGenerator[dict, None]`:
+    - Used by: dashboard SSE endpoint (`POST /api/chat/stream`) only
+    - Stages 1–2 run identically to batch (preprocess + RAG); no caching on the stream path
+    - Stage 3 uses `stream_agent()` (see 9.5a) instead of `run_agent()` — yields typed SSE event dicts as they arrive
+    - Stage 4 deferred: PII redaction applied to the fully-accumulated answer text; emitted as a final `{type: "done", text_for_user: str, mutations: list}` event before the generator closes
+    - Error events: `{type: "error", message: str}` — never raises, mirrors batch path's fail-safe design
+- [ ] **9.5a** Add `stream_agent()` to `app/stages/generation/agent.py`:
+  - Uses `client.messages.stream()` (Anthropic async streaming context manager) instead of `client.messages.create()`
+  - Yields typed event dicts at each meaningful point in the agent loop:
+    - `{type: "thinking", text: str}` — streamed text tokens as they arrive
+    - `{type: "tool_start", name: str, input: dict}` — tool call dispatched
+    - `{type: "tool_result", name: str, result: str}` — tool execution complete
+    - `{type: "answer_token", text: str}` — final answer streaming tokens
+  - Same max-iteration guard and timeout logic as `run_agent()`; on hitting limit, yields `{type: "answer_token", text: fallback}` and closes
 - [ ] **9.6** Create Grafana dashboard JSON provisioning files:
   - Pipeline performance dashboard (stage latencies, error rates, throughput)
   - LLM usage dashboard (token counts, cache hit rates, model latency)
@@ -268,7 +281,7 @@
     - `POST /api/pipeline/debug/rag`: runs Stages 1–2. Accepts `{"input": str, "context": dict}`. Returns `StructuredInput` plus the full ranked chunk list with per-chunk scores, doc_type, entity_id, and compression flag. Enables descriptive and inferential statistics on retrieval quality (precision, recall, score distributions) without incurring LLM cost.
     - `POST /api/pipeline/debug/generate`: runs Stages 1–3. Accepts `{"input": str, "context": dict}` **or** `{"structured_input": StructuredInput, "rag_context": list[dict], "context": dict}` (the second form allows injecting a fixed/controlled RAG context for controlled generation experiments). Returns the raw agent loop result: `answer`, `tool_calls` log, `iterations`, `stop_reason`, and the full `messages` conversation history. Pre-post-processing. Enables generation quality evaluation with controlled inputs and analysis of tool call patterns.
 - [ ] **9.8** Ensure `run_pipeline()` emits a structured `PipelineTrace` Pydantic model (alongside the final response) capturing: `stage_timings: dict[str, float]`, `cache_hits: dict[str, bool]`, `guard_result: dict`, `rag_chunks_retrieved: int`, `rag_chunks_after_rerank: int`, `rag_top_scores: list[float]`, `llm_tokens_prompt: int`, `llm_tokens_completion: int`, `raw_llm_output: str`, `postprocess_mutations: list[str]` (list of what PII/validation changes were made). This trace is returned by the `/api/pipeline/run` endpoint and logged to structlog for Loki ingestion.
-- [ ] **9.9** Write integration tests in `tests/test_pipeline.py`:
+- [ ] **9.9** Write integration tests in `tests/test_pipeline.py` (all external calls mocked — no running services):
   - Test full pipeline end-to-end with mocked LLM
   - Test timeout behavior per stage
   - Test retry logic on transient failures
@@ -279,6 +292,13 @@
   - Test `/api/pipeline/debug/preprocess` returns `StructuredInput` with correct intent and guard fields
   - Test `/api/pipeline/debug/rag` returns chunk list with scores; verify empty list on attendance intent
   - Test `/api/pipeline/debug/generate` with injected RAG context (controlled input form) returns agent result with `messages` history
+  - **Channel branching tests** (confirm the correct execution path is taken based on `context["channel"]`):
+    - SMS input (`channel="sms"`) → `run_pipeline()` called, returns `PostprocessedResponse`; `run_pipeline_stream()` never called
+    - Dashboard input (`channel="dashboard"`) → `run_pipeline_stream()` called, `run_pipeline()` never called
+    - `run_pipeline_stream()` with mocked `stream_agent()` yields events in order: one or more `thinking`/`tool_start`/`tool_result` events followed by `answer_token` events, closed by exactly one `done` event
+    - `done` event contains PII-redacted `text_for_user` and `mutations` list (confirms post-processing applied at stream close)
+    - `error` event yielded (not exception raised) when a stage fails mid-stream
+    - `POST /api/chat/stream` route: returns `Content-Type: text/event-stream`, each line is valid `data: <json>` SSE format, connection closed after `done` event
 
 ---
 
@@ -332,9 +352,12 @@
   - Schedule import (CSV/iCal file upload -> backend parsing)
   - Attendance grid: visual matrix of players vs games with status indicators
 - [ ] **10.6** Create `app/routes/chat.py` on backend:
-  - `GET /api/chat/stream` SSE endpoint: accepts query param, runs pipeline, yields `text/event-stream` chunks as LLM generates tokens
-  - Proper SSE format with `data:` prefixed JSON events (type: token, tool_call, final_answer, error)
-  - Connection keepalive and timeout handling
+  - `POST /api/chat/stream`: JWT-authenticated SSE endpoint for dashboard channel only
+  - Accepts `{"input": str, "context": dict}` — sets `context["channel"] = "dashboard"` and delegates to `run_pipeline_stream()` (Phase 9.5)
+  - Serializes each yielded event dict to `data: <json>\n\n` SSE format; flushes immediately
+  - Event types (defined by `run_pipeline_stream()`): `thinking`, `tool_start`, `tool_result`, `answer_token`, `done`, `error`
+  - Connection keepalive: yield `data: {"type": "ping"}\n\n` every 15s if no events
+  - Client disconnect detection: wrap generator in try/finally; cancel pipeline task on disconnect
 - [ ] **10.7** Implement AI Chat interface on frontend:
   - Chat message list with streaming text display
   - Input field for natural language queries

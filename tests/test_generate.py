@@ -325,3 +325,141 @@ class TestAgentLoop:
             assert result["stop_reason"] == "tool_use"  # last stop_reason before forced exit
 
         asyncio.run(run())
+
+    def test_agent_treats_max_tokens_as_final_answer(self):
+        """stop_reason='max_tokens' routes to END (same as end_turn), returning accumulated text."""
+        mock_response = _make_text_response("Partial answer cut off here", stop_reason="max_tokens")
+
+        async def run():
+            mock_db = AsyncMock()
+            with patch("app.stages.generation.generate._get_client") as mock_client_factory:
+                mock_client = MagicMock()
+                mock_client.messages.create = AsyncMock(return_value=mock_response)
+                mock_client_factory.return_value = mock_client
+
+                from app.stages.generation.agent import run_agent
+                result = await run_agent(QUERY_INPUT, RAG_CHUNKS, CTX, mock_db)
+
+            assert result["stop_reason"] == "max_tokens"
+            assert result["iterations"] == 1
+            assert "Partial answer" in result["answer"]
+            assert result["tool_calls"] == []
+
+        asyncio.run(run())
+
+    def test_agent_continues_after_tool_dispatch_error(self):
+        """Tool exception is caught, recorded with 'error' key, and agent continues to next LLM call."""
+        tool_response = _make_tool_use_response("get_roster", {"team_id": 42}, tool_id="tu_err")
+        final_response = _make_text_response("Could not retrieve roster.", stop_reason="end_turn")
+
+        async def run():
+            mock_db = AsyncMock()
+
+            call_count = {"n": 0}
+            async def mock_create(**kwargs):
+                call_count["n"] += 1
+                return tool_response if call_count["n"] == 1 else final_response
+
+            with (
+                patch("app.stages.generation.generate._get_client") as mock_client_factory,
+                patch("app.stages.generation.agent.dispatch_tool", new_callable=AsyncMock) as mock_dispatch,
+            ):
+                mock_client = MagicMock()
+                mock_client.messages.create = AsyncMock(side_effect=mock_create)
+                mock_client_factory.return_value = mock_client
+                mock_dispatch.side_effect = RuntimeError("DB connection lost")
+
+                from app.stages.generation.agent import run_agent
+                result = await run_agent(QUERY_INPUT, RAG_CHUNKS, CTX, mock_db)
+
+            # Agent must not raise — it continues and produces an answer
+            assert result["stop_reason"] == "end_turn"
+            assert result["iterations"] == 2
+            # Tool call log records the error, not a result
+            assert len(result["tool_calls"]) == 1
+            assert "error" in result["tool_calls"][0]
+            assert "result" not in result["tool_calls"][0]
+
+        asyncio.run(run())
+
+    def test_agent_dispatches_multiple_tools_in_one_turn(self):
+        """All tool_use blocks in a single response are dispatched before the next LLM call."""
+        from types import SimpleNamespace
+
+        # Response with two tool_use blocks
+        block1 = SimpleNamespace(type="tool_use", id="tu_1", name="get_roster",   input={"team_id": 42})
+        block2 = SimpleNamespace(type="tool_use", id="tu_2", name="get_attendance", input={"game_id": 1})
+        multi_tool_msg = MagicMock()
+        multi_tool_msg.stop_reason = "tool_use"
+        multi_tool_msg.content = [block1, block2]
+        multi_tool_msg.usage = SimpleNamespace(input_tokens=130, output_tokens=45)
+
+        final_response = _make_text_response("Here is the info.", stop_reason="end_turn")
+
+        async def run():
+            mock_db = AsyncMock()
+
+            call_count = {"n": 0}
+            async def mock_create(**kwargs):
+                call_count["n"] += 1
+                return multi_tool_msg if call_count["n"] == 1 else final_response
+
+            with (
+                patch("app.stages.generation.generate._get_client") as mock_client_factory,
+                patch("app.stages.generation.agent.dispatch_tool", new_callable=AsyncMock) as mock_dispatch,
+            ):
+                mock_client = MagicMock()
+                mock_client.messages.create = AsyncMock(side_effect=mock_create)
+                mock_client_factory.return_value = mock_client
+                mock_dispatch.return_value = {"ok": True}
+
+                from app.stages.generation.agent import run_agent
+                result = await run_agent(QUERY_INPUT, RAG_CHUNKS, CTX, mock_db)
+
+            # Both tools dispatched in a single execute_tools pass
+            assert mock_dispatch.call_count == 2
+            dispatched_names = {c.args[0] for c in mock_dispatch.call_args_list}
+            assert dispatched_names == {"get_roster", "get_attendance"}
+            assert len(result["tool_calls"]) == 2
+
+        asyncio.run(run())
+
+    def test_agent_tool_results_fed_back_as_user_message(self):
+        """Tool results are appended as a 'user' role message with tool_result content blocks (Anthropic protocol)."""
+        tool_response = _make_tool_use_response("get_roster", {"team_id": 42}, tool_id="tu_check")
+        final_response = _make_text_response("Roster retrieved.", stop_reason="end_turn")
+
+        captured_messages = {}
+
+        async def run():
+            mock_db = AsyncMock()
+
+            call_count = {"n": 0}
+            async def mock_create(**kwargs):
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    # Capture messages on the second (post-tool) call
+                    captured_messages["msgs"] = kwargs.get("messages", [])
+                return tool_response if call_count["n"] == 1 else final_response
+
+            with (
+                patch("app.stages.generation.generate._get_client") as mock_client_factory,
+                patch("app.stages.generation.agent.dispatch_tool", new_callable=AsyncMock) as mock_dispatch,
+            ):
+                mock_client = MagicMock()
+                mock_client.messages.create = AsyncMock(side_effect=mock_create)
+                mock_client_factory.return_value = mock_client
+                mock_dispatch.return_value = {"players": []}
+
+                from app.stages.generation.agent import run_agent
+                await run_agent(QUERY_INPUT, RAG_CHUNKS, CTX, mock_db)
+
+            # The last message fed to the second LLM call must be the tool result user turn
+            msgs = captured_messages["msgs"]
+            tool_result_turn = msgs[-1]
+            assert tool_result_turn["role"] == "user"
+            assert isinstance(tool_result_turn["content"], list)
+            assert tool_result_turn["content"][0]["type"] == "tool_result"
+            assert tool_result_turn["content"][0]["tool_use_id"] == "tu_check"
+
+        asyncio.run(run())
