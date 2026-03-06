@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
-    # Ollama
+    # Anthropic (Stage 3 LLM — Claude Haiku)
+    anthropic_api_key: str = ""
+
+    # Ollama (Stage 1 Llama Guard only — not used for generation)
     ollama_host: str = "http://localhost:11434"
 
     # Qdrant

@@ -15,7 +15,7 @@ import structlog
 from spacy.language import Language
 
 from app.schemas.pipeline import EntityMap, Intent, StructuredInput
-from app.stages.guards import check_safety
+from app.stages.preprocess.guards import check_safety
 
 log = structlog.get_logger(__name__)
 

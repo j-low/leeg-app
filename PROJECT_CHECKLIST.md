@@ -165,17 +165,17 @@
 
 ## Phase 7 - Stage 3: Generation, Tool Calling & Agentic Loops
 
-**Pipeline concern:** Core LLM reasoning -- prompt engineering with structured output enforcement, tool-calling for real-world side effects (DB writes, SMS sends), and agentic ReAct loops for multi-step reasoning. Uses self-hosted quantized LLM (Llama-3.1-8B Q5) for cost control and privacy. This is the heart of the AI pipeline.
+**Pipeline concern:** Core LLM reasoning -- prompt engineering with structured output enforcement, tool-calling for real-world side effects (DB writes, SMS sends), and agentic ReAct loops for multi-step reasoning. Uses Claude Haiku via the Anthropic API (no self-hosted LLM required; no Docker service added). This is the heart of the AI pipeline.
 
-- [ ] **7.1** Add generation dependencies to `requirements.txt`: `ollama`, `langgraph`, `instructor`
-- [ ] **7.2** Add `ollama` service to `docker-compose.yml` (GPU passthrough if available, volume for models); pull `llama3.1:8b-instruct-q5_0` model
-- [ ] **7.3** Create `app/stages/prompts.py`: Jinja2 prompt templates for each intent type:
-  - `attendance_update.j2`: system prompt + context + entities + instructions for attendance tool call
-  - `lineup_suggestion.j2`: system prompt + context + roster + preferences + criteria + structured output format
-  - `general_query.j2`: system prompt + context + question + answer format
-  - `survey_collection.j2`: system prompt + survey context + response parsing
-  - Base system prompt establishing the assistant's role, constraints, and output format
-- [ ] **7.4** Create `app/stages/tools.py`: tool function definitions (callable by the agent):
+- [x] **7.1** Add generation dependencies to `requirements.txt`: `anthropic`, `langgraph`, `instructor`, `jinja2`
+- [x] **7.2** Add `ANTHROPIC_API_KEY` to `app/config.py` (`anthropic_api_key: str = ""`) and `.env.example`. No Docker service is needed -- Claude Haiku is called via the Anthropic API. In production, the key is stored in AWS SSM Parameter Store.
+- [x] **7.3** Create `app/stages/prompts.py`: Jinja2 prompt templates for each intent type, producing `messages` lists compatible with the Anthropic API:
+  - `base_system.j2`: shared role, constraints, and output format (included by all templates)
+  - `attendance_update.j2`: system prompt + context + entities + attendance tool call instructions
+  - `lineup_suggestion.j2`: system prompt + roster + preferences + criteria + structured output format
+  - `general_query.j2`: system prompt + RAG context + question + answer format
+  - `survey_collection.j2`: system prompt + survey context + response parsing instructions
+- [x] **7.4** Create `app/stages/tools.py`: tool definitions in Claude tool use format (`name`, `description`, `input_schema`) paired with async Python implementations:
   - `update_attendance(game_id, player_id, status)` -> DB write
   - `get_attendance(game_id)` -> DB read
   - `send_sms(to_phone, message)` -> Twilio send
@@ -185,24 +185,22 @@
   - `get_player_prefs(player_id)` -> DB read
   - `update_player_prefs(player_id, prefs)` -> DB write
   - `search_schedule(query)` -> DB read
-  - Each tool has a JSON schema for the LLM and a Python implementation
-- [ ] **7.5** Create `app/stages/generate.py`:
+- [x] **7.5** Create `app/stages/generate.py`:
   - `async def generate_response(structured_input: StructuredInput, rag_context: list[dict], context: dict) -> dict`
-  - Assemble prompt: system template + compressed RAG context + extracted entities + conversation history
-  - Call Ollama async API with structured output enforcement (via `instructor` or manual JSON mode)
-  - Parse LLM response for tool calls or final answer
-- [ ] **7.6** Create `app/stages/agent.py`: LangGraph ReAct agent loop:
-  - State graph: `input -> reason -> tool_call -> observe -> reason -> ... -> final_answer`
-  - Maximum 5 iterations to prevent runaway loops
-  - Tool dispatch: match tool name from LLM output to registered tool functions
-  - Feed tool results back into next LLM call
-  - Timeout per iteration (30s) and total (120s)
-  - Return final structured response
-- [ ] **7.7** Write tests in `tests/test_generate.py`:
-  - Test prompt assembly produces valid prompts
-  - Test tool dispatch routes correctly
-  - Test agent loop terminates within max iterations
-  - Test structured output parsing (mock LLM responses)
+  - Render the appropriate Jinja2 template (system + user messages)
+  - Call `anthropic.AsyncAnthropic` with `model="claude-haiku-4-5-20251001"`, `tools=[...]`, `tool_choice="auto"`
+  - Parse response: `tool_use` blocks handed to agent loop; `text` blocks returned as final answer
+- [x] **7.6** Create `app/stages/agent.py`: LangGraph ReAct agent loop:
+  - State: `{messages, tool_results, iteration_count}`
+  - Nodes: `call_llm`, `execute_tool`, `check_termination`
+  - Maximum 5 iterations; 30s per-iteration timeout; 120s total timeout
+  - On `stop_reason == "end_turn"` or max iterations: return final answer
+- [x] **7.7** Write tests in `tests/test_generate.py`:
+  - Test prompt assembly produces correct Anthropic message format
+  - Test tool dispatch routes to correct Python function
+  - Test agent loop terminates on `end_turn`
+  - Test max iteration guard fires at iteration 5
+  - Test structured output parsing from `tool_use` blocks (mock Anthropic client)
 
 ---
 
@@ -261,11 +259,14 @@
   - Pipeline performance dashboard (stage latencies, error rates, throughput)
   - LLM usage dashboard (token counts, cache hit rates, model latency)
   - System health dashboard (container resources, DB connections, queue depth)
-- [ ] **9.7** Expose a dedicated eval-friendly pipeline endpoint in `app/routes/pipeline.py`:
-  - `POST /api/pipeline/run` (JWT-protected, captain/admin only): accepts `{"input": str, "context": dict}`, runs the full pipeline, returns structured response **plus** a `pipeline_trace` block containing: stage-by-stage latencies, cache hit/miss per stage, token counts, guard decisions, retrieval chunk count and scores, and the raw LLM output before post-processing. This is the clean API contract the eval runner (Phase 13) will target.
-  - `POST /api/pipeline/run-batch` (admin only): accepts an array of `{input, context}` objects (max 50), runs each through the pipeline sequentially, returns an array of traced responses. Used for bulk eval test-set runs without needing a live UI.
-  - Both endpoints must bypass Celery (synchronous, direct call to `run_pipeline`) so the eval runner gets a blocking response rather than a task ID.
-  - Add these routes to `app/main.py` under an `/api/pipeline` prefix.
+- [ ] **9.7** Expose eval-friendly pipeline endpoints in `app/routes/pipeline.py`. All endpoints are admin-only, bypass Celery (blocking direct calls), and return structured Pydantic responses the eval runner (Phase 13) can target. Add all routes to `app/main.py` under an `/api/pipeline` prefix.
+  - **Full pipeline:**
+    - `POST /api/pipeline/run`: accepts `{"input": str, "context": dict}`, runs all four stages, returns final response **plus** a `pipeline_trace` block (see step 9.8 for full trace schema). Primary eval runner target.
+    - `POST /api/pipeline/run-batch`: accepts array of `{input, context}` objects (max 50), runs each sequentially, returns array of traced responses. Used for bulk test-set runs.
+  - **Stage-isolated debug endpoints** (admin only, never used in the SMS path — eval and diagnostics only):
+    - `POST /api/pipeline/debug/preprocess`: runs Stage 1 only. Accepts `{"input": str, "context": dict}`. Returns the full `StructuredInput` (intent, confidence, entities, guard result, `is_safe` flag). Enables retrieval-independent evaluation of intent classification and safety guard accuracy.
+    - `POST /api/pipeline/debug/rag`: runs Stages 1–2. Accepts `{"input": str, "context": dict}`. Returns `StructuredInput` plus the full ranked chunk list with per-chunk scores, doc_type, entity_id, and compression flag. Enables descriptive and inferential statistics on retrieval quality (precision, recall, score distributions) without incurring LLM cost.
+    - `POST /api/pipeline/debug/generate`: runs Stages 1–3. Accepts `{"input": str, "context": dict}` **or** `{"structured_input": StructuredInput, "rag_context": list[dict], "context": dict}` (the second form allows injecting a fixed/controlled RAG context for controlled generation experiments). Returns the raw agent loop result: `answer`, `tool_calls` log, `iterations`, `stop_reason`, and the full `messages` conversation history. Pre-post-processing. Enables generation quality evaluation with controlled inputs and analysis of tool call patterns.
 - [ ] **9.8** Ensure `run_pipeline()` emits a structured `PipelineTrace` Pydantic model (alongside the final response) capturing: `stage_timings: dict[str, float]`, `cache_hits: dict[str, bool]`, `guard_result: dict`, `rag_chunks_retrieved: int`, `rag_chunks_after_rerank: int`, `rag_top_scores: list[float]`, `llm_tokens_prompt: int`, `llm_tokens_completion: int`, `raw_llm_output: str`, `postprocess_mutations: list[str]` (list of what PII/validation changes were made). This trace is returned by the `/api/pipeline/run` endpoint and logged to structlog for Loki ingestion.
 - [ ] **9.9** Write integration tests in `tests/test_pipeline.py`:
   - Test full pipeline end-to-end with mocked LLM
@@ -275,6 +276,9 @@
   - Verify OpenTelemetry spans are created
   - Test `/api/pipeline/run` returns valid `PipelineTrace` with all required fields
   - Test `/api/pipeline/run-batch` processes multiple inputs and returns array of traces
+  - Test `/api/pipeline/debug/preprocess` returns `StructuredInput` with correct intent and guard fields
+  - Test `/api/pipeline/debug/rag` returns chunk list with scores; verify empty list on attendance intent
+  - Test `/api/pipeline/debug/generate` with injected RAG context (controlled input form) returns agent result with `messages` history
 
 ---
 
@@ -607,6 +611,36 @@
 
 ---
 
+## Phase 15 - Cloud Prep (AWS)
+
+**Pipeline concern:** Production readiness before going live -- secrets management, TLS termination, nginx reverse proxy, and Twilio live webhook configuration. Deployment pattern: single EC2 VM running docker-compose (Option A -- straightforward, convertible to ECS Fargate later). All stateful services (Postgres, Redis, Qdrant) self-hosted in Docker containers on the same VM. Claude Haiku replaces any self-hosted LLM concern entirely.
+
+- [ ] **15.1** Provision EC2 instance (Ubuntu 24.04 LTS, t3.small), create IAM user with least-privilege permissions, generate key pair, configure security group (inbound: SSH/22, HTTP/80, HTTPS/443 only)
+- [ ] **15.2** Install Docker + docker-compose-plugin on EC2; allocate an Elastic IP; clone repo onto instance; copy production `.env` with real secret values
+- [ ] **15.3** Register or reuse a domain; point its A record to the EC2 Elastic IP
+- [ ] **15.4** Install nginx + certbot on EC2; configure reverse proxy: `https://<domain>` -> FastAPI port 8000 and Next.js port 3000 with Let's Encrypt TLS auto-renewal
+- [ ] **15.5** Store all production secrets in AWS SSM Parameter Store (`/leeg/prod/*`); write `scripts/fetch_secrets.sh` that pulls them into `.env` on each deploy
+- [ ] **15.6** Add `ANTHROPIC_API_KEY` to SSM (`/leeg/prod/anthropic_api_key`); verify it is correctly read by the app at startup
+- [ ] **15.7** Update Twilio webhook URL in the Twilio console to `https://<domain>/sms/webhook`; send a test SMS and verify signature validation passes end-to-end
+- [ ] **15.8** Create `docker-compose.prod.yml` override: remove host port exposure (traffic flows through nginx only), add memory limits, configure Docker log driver (awslogs or json-file with rotation)
+
+---
+
+## Phase 16 - Cloud Deployment & Smoke Test
+
+**Pipeline concern:** End-to-end verification that the full system works in production -- database migrations, Qdrant data ingestion, live SMS pipeline, and dashboard accessible over HTTPS. Establishes the production runbook.
+
+- [ ] **16.1** Run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` on EC2; verify all containers reach healthy status
+- [ ] **16.2** Run Alembic migrations against production Postgres: `alembic upgrade head`
+- [ ] **16.3** Run `python scripts/ingest_to_qdrant.py` against production Qdrant to populate vector store with real team data
+- [ ] **16.4** Smoke test API layer: `/health` returns 200, captain registration + login succeed, JWT-protected route returns 200
+- [ ] **16.5** Smoke test SMS pipeline: send a real SMS to the Twilio number, verify Celery task runs, verify AI response is received
+- [ ] **16.6** Smoke test dashboard: open `https://<domain>` in browser, complete login flow, submit an AI chat query, verify streamed response
+- [ ] **16.7** Configure a basic CloudWatch alarm: EC2 CPU > 80% for 5 minutes and disk utilisation > 85% trigger email alert
+- [ ] **16.8** Document production runbook in `README.md`: how to deploy, roll back, rotate secrets, tail logs, and re-run ingestion
+
+---
+
 ## Progress Summary
 
 | Phase | Description | Status |
@@ -617,7 +651,7 @@
 | 4 | SMS Integration & Inbound Webhook | Complete |
 | 5 | Stage 1: Preprocessing & Security | Complete |
 | 6 | Stage 2: Hybrid RAG | Complete |
-| 7 | Stage 3: Generation & Agentic Loops | Not Started |
+| 7 | Stage 3: Generation & Agentic Loops | Complete |
 | 8 | Stage 4: Post-Processing | Not Started |
 | 9 | Pipeline Orchestration & Observability | Not Started |
 | 10 | Web Dashboard & Streaming | Not Started |
@@ -625,7 +659,9 @@
 | 12 | Deployment Readiness & CI | Not Started |
 | 13 | Eval Runner (Companion Project) | Not Started |
 | 14 | Optimization Lab (Companion Project) | Not Started |
+| 15 | Cloud Prep (AWS EC2 + nginx + SSM) | Not Started |
+| 16 | Cloud Deployment & Smoke Test | Not Started |
 
-**Total Steps:** 121
-**Completed:** 53
-**Remaining:** 68
+**Total Steps:** 137
+**Completed:** 60
+**Remaining:** 77

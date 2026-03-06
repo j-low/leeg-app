@@ -37,7 +37,13 @@ sentence-transformers>=3.0,<4.0
 langchain-text-splitters>=0.3,<1.0
 llmlingua>=0.2,<1.0
 
-# HTTP client (Ollama API calls in stages)
+# Generation (Stage 3: LLM inference, tool calling, agentic loops)
+anthropic>=0.40,<1.0          # Claude Haiku via Anthropic API
+langgraph>=0.2,<1.0           # ReAct agent state graph
+instructor>=1.4,<2.0          # Pydantic structured output (Anthropic provider)
+jinja2>=3.1,<4.0              # Prompt template rendering
+
+# HTTP client (async HTTP calls)
 httpx>=0.27,<1.0
 
 # Logging

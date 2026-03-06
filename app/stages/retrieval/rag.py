@@ -10,7 +10,7 @@ Short-circuits (returns []) for intents that never need grounding:
   - attendance_update  (plain yes/no; no roster lookup needed)
 
 The compressed context chunks returned here are passed directly into the
-prompt assembly in Stage 3 (generate.py).
+prompt assembly in Stage 3 (generation/prompts.py).
 """
 import logging
 

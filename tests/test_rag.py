@@ -365,8 +365,8 @@ class TestRagStage:
     def test_attendance_intent_skips_rag(self):
         """attendance_update intent returns empty context without touching Qdrant."""
         async def run():
-            with patch("app.stages.rag.retrieve") as mock_retrieve:
-                from app.stages.rag import retrieve_context
+            with patch("app.stages.retrieval.rag.retrieve") as mock_retrieve:
+                from app.stages.retrieval import retrieve_context
                 result = await retrieve_context(ATTENDANCE_INPUT, CTX)
 
             assert result == []
@@ -383,11 +383,11 @@ class TestRagStage:
 
         async def run():
             with (
-                patch("app.stages.rag.retrieve", return_value=mock_chunks),
-                patch("app.stages.rag.rerank", return_value=mock_chunks),
-                patch("app.stages.rag._try_import_llmlingua", return_value=None),
+                patch("app.stages.retrieval.rag.retrieve", return_value=mock_chunks),
+                patch("app.stages.retrieval.rag.rerank", return_value=mock_chunks),
+                patch("app.stages.retrieval.rag._try_import_llmlingua", return_value=None),
             ):
-                from app.stages.rag import retrieve_context
+                from app.stages.retrieval import retrieve_context
                 result = await retrieve_context(SAMPLE_STRUCTURED_INPUT, CTX)
 
             assert len(result) == 1
@@ -399,10 +399,10 @@ class TestRagStage:
         """Empty retrieval result propagates as empty list."""
         async def run():
             with (
-                patch("app.stages.rag.retrieve", return_value=[]),
-                patch("app.stages.rag.rerank", return_value=[]),
+                patch("app.stages.retrieval.rag.retrieve", return_value=[]),
+                patch("app.stages.retrieval.rag.rerank", return_value=[]),
             ):
-                from app.stages.rag import retrieve_context
+                from app.stages.retrieval import retrieve_context
                 result = await retrieve_context(SAMPLE_STRUCTURED_INPUT, CTX)
 
             assert result == []

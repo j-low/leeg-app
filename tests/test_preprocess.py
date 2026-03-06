@@ -10,8 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.schemas.pipeline import Intent
-from app.stages.guards import _check_regex, check_safety
-from app.stages.preprocess import SecurityError, preprocess_input
+from app.stages.preprocess import SecurityError, _check_regex, check_safety, preprocess_input
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -19,7 +18,7 @@ CTX = {"channel": "sms", "from_phone": "+16135550101"}
 
 # Patch Llama Guard to always return "safe" unless we override it
 _SAFE_GUARD = patch(
-    "app.stages.guards._check_llama_guard",
+    "app.stages.preprocess.guards._check_llama_guard",
     new_callable=AsyncMock,
     return_value=(True, ""),
 )
@@ -136,7 +135,7 @@ class TestCombinedSafety:
         # Message must be > 20 chars to trigger the Llama Guard check
         long_msg = "this is a potentially harmful and unsafe message for testing"
         with patch(
-            "app.stages.guards._check_llama_guard",
+            "app.stages.preprocess.guards._check_llama_guard",
             new_callable=AsyncMock,
             return_value=(False, "llama_guard: S1"),
         ):
@@ -148,7 +147,7 @@ class TestCombinedSafety:
     async def test_llama_guard_unavailable_fails_open(self):
         """If Ollama is down, Llama Guard degrades gracefully (fail open)."""
         with patch(
-            "app.stages.guards._check_llama_guard",
+            "app.stages.preprocess.guards._check_llama_guard",
             new_callable=AsyncMock,
             side_effect=Exception("connection refused"),
         ):
