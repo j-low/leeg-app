@@ -9,10 +9,14 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
 from app.limiter import limiter
-from app.routes import auth, games, lineups, messaging, players, seasons, sms, teams
+from app.observability import configure_observability, get_metrics_app
+from app.routes import auth, games, lineups, messaging, pipeline, players, seasons, sms, teams
 
 
 def create_app() -> FastAPI:
+    # Initialise structlog JSON + OTel before any request handling
+    configure_observability(settings.otel_endpoint)
+
     app = FastAPI(
         title="Leeg",
         version="0.1.0",
@@ -45,6 +49,16 @@ def create_app() -> FastAPI:
         response.headers["X-XSS-Protection"] = "1; mode=block"
         return response
 
+    # ── OTel FastAPI auto-instrumentation ─────────────────────────────────
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+    except Exception:
+        pass  # OTel not critical; fail silently if package missing
+
+    # ── Prometheus /metrics endpoint ───────────────────────────────────────
+    app.mount("/metrics", get_metrics_app())
+
     # ── Routers ───────────────────────────────────────────────────────────
     app.include_router(auth.router)
     app.include_router(teams.router)
@@ -54,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(lineups.router)
     app.include_router(messaging.router)
     app.include_router(sms.router)
+    app.include_router(pipeline.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

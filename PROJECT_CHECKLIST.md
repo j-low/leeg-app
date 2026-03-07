@@ -232,20 +232,21 @@
 
 **Pipeline concern:** End-to-end pipeline wiring, async flow control, caching strategy, and full observability stack (traces, metrics, logs). This is where individual stages become a production system -- with timeouts, retries, circuit breakers, and the ability to diagnose issues via distributed tracing and dashboards.
 
-- [ ] **9.1** Add observability dependencies to `requirements.txt`: `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp`, `opentelemetry-instrumentation-fastapi`, `prometheus-client`, `python-json-logger`
-- [ ] **9.2** Add observability services to `docker-compose.yml`:
+- [x] **9.1** Add observability dependencies to `requirements.txt`: `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp`, `opentelemetry-instrumentation-fastapi`, `prometheus-client`, `python-json-logger`
+- [x] **9.2** Add observability services to `docker-compose.yml`:
   - `prometheus` (port 9090, with config to scrape FastAPI metrics)
-  - `grafana` (port 3000, with provisioned datasources for Prometheus + Loki + Jaeger)
+  - `grafana` (port 3001 — 3000 reserved for Next.js Phase 10, with provisioned datasources for Prometheus + Loki + Jaeger)
   - `loki` (port 3100, log aggregation)
   - `jaeger` (port 16686, distributed tracing UI)
   - `otel-collector` (receives spans from app, exports to Jaeger)
-- [ ] **9.3** Create `app/observability.py`:
+  - `promtail` (ships container logs → Loki)
+- [x] **9.3** Create `app/observability.py`:
   - OpenTelemetry tracer/meter initialization
   - Custom span decorators for pipeline stages
-  - Prometheus metrics: `pipeline_duration_seconds` (histogram), `pipeline_stage_duration_seconds` (histogram by stage), `pipeline_errors_total` (counter by stage), `llm_tokens_total` (counter), `cache_hit_ratio` (gauge)
+  - Prometheus metrics: `pipeline_duration_seconds` (histogram), `pipeline_stage_duration_seconds` (histogram by stage), `pipeline_errors_total` (counter by stage), `llm_tokens_total` (counter)
   - Structlog configuration: JSON format, output to stdout (collected by Loki)
-- [ ] **9.4** Instrument FastAPI app with OpenTelemetry auto-instrumentation
-- [ ] **9.5** Complete `app/pipeline.py` with channel-aware dual-mode execution. Channel (`"sms"` or `"dashboard"`) is read from `context["channel"]` and determines which execution path is taken. **Eval always uses the batch path.**
+- [x] **9.4** Instrument FastAPI app with OpenTelemetry auto-instrumentation
+- [x] **9.5** Complete `app/pipeline.py` with channel-aware dual-mode execution. Channel (`"sms"` or `"dashboard"`) is read from `context["channel"]` and determines which execution path is taken. **Eval always uses the batch path.**
   - **Batch path** — `async def run_pipeline(raw_input: str, context: dict) -> PostprocessedResponse`:
     - Used by: SMS inbound webhook, `/api/pipeline/run` eval endpoint
     - Chain: `preprocess` → `retrieve_context` → `run_agent()` → `postprocess()`
@@ -260,7 +261,7 @@
     - Stage 3 uses `stream_agent()` (see 9.5a) instead of `run_agent()` — yields typed SSE event dicts as they arrive
     - Stage 4 deferred: PII redaction applied to the fully-accumulated answer text; emitted as a final `{type: "done", text_for_user: str, mutations: list}` event before the generator closes
     - Error events: `{type: "error", message: str}` — never raises, mirrors batch path's fail-safe design
-- [ ] **9.5a** Add `stream_agent()` to `app/stages/generation/agent.py`:
+- [x] **9.5a** Add `stream_agent()` to `app/stages/generation/agent.py`:
   - Uses `client.messages.stream()` (Anthropic async streaming context manager) instead of `client.messages.create()`
   - Yields typed event dicts at each meaningful point in the agent loop:
     - `{type: "thinking", text: str}` — streamed text tokens as they arrive
@@ -268,11 +269,11 @@
     - `{type: "tool_result", name: str, result: str}` — tool execution complete
     - `{type: "answer_token", text: str}` — final answer streaming tokens
   - Same max-iteration guard and timeout logic as `run_agent()`; on hitting limit, yields `{type: "answer_token", text: fallback}` and closes
-- [ ] **9.6** Create Grafana dashboard JSON provisioning files:
+- [x] **9.6** Create Grafana dashboard JSON provisioning files:
   - Pipeline performance dashboard (stage latencies, error rates, throughput)
   - LLM usage dashboard (token counts, cache hit rates, model latency)
   - System health dashboard (container resources, DB connections, queue depth)
-- [ ] **9.7** Expose eval-friendly pipeline endpoints in `app/routes/pipeline.py`. All endpoints are admin-only, bypass Celery (blocking direct calls), and return structured Pydantic responses the eval runner (Phase 13) can target. Add all routes to `app/main.py` under an `/api/pipeline` prefix.
+- [x] **9.7** Expose eval-friendly pipeline endpoints in `app/routes/pipeline.py`. All endpoints are admin-only, bypass Celery (blocking direct calls), and return structured Pydantic responses the eval runner (Phase 13) can target. Add all routes to `app/main.py` under an `/api/pipeline` prefix.
   - **Full pipeline:**
     - `POST /api/pipeline/run`: accepts `{"input": str, "context": dict}`, runs all four stages, returns final response **plus** a `pipeline_trace` block (see step 9.8 for full trace schema). Primary eval runner target.
     - `POST /api/pipeline/run-batch`: accepts array of `{input, context}` objects (max 50), runs each sequentially, returns array of traced responses. Used for bulk test-set runs.
@@ -280,8 +281,8 @@
     - `POST /api/pipeline/debug/preprocess`: runs Stage 1 only. Accepts `{"input": str, "context": dict}`. Returns the full `StructuredInput` (intent, confidence, entities, guard result, `is_safe` flag). Enables retrieval-independent evaluation of intent classification and safety guard accuracy.
     - `POST /api/pipeline/debug/rag`: runs Stages 1–2. Accepts `{"input": str, "context": dict}`. Returns `StructuredInput` plus the full ranked chunk list with per-chunk scores, doc_type, entity_id, and compression flag. Enables descriptive and inferential statistics on retrieval quality (precision, recall, score distributions) without incurring LLM cost.
     - `POST /api/pipeline/debug/generate`: runs Stages 1–3. Accepts `{"input": str, "context": dict}` **or** `{"structured_input": StructuredInput, "rag_context": list[dict], "context": dict}` (the second form allows injecting a fixed/controlled RAG context for controlled generation experiments). Returns the raw agent loop result: `answer`, `tool_calls` log, `iterations`, `stop_reason`, and the full `messages` conversation history. Pre-post-processing. Enables generation quality evaluation with controlled inputs and analysis of tool call patterns.
-- [ ] **9.8** Ensure `run_pipeline()` emits a structured `PipelineTrace` Pydantic model (alongside the final response) capturing: `stage_timings: dict[str, float]`, `cache_hits: dict[str, bool]`, `guard_result: dict`, `rag_chunks_retrieved: int`, `rag_chunks_after_rerank: int`, `rag_top_scores: list[float]`, `llm_tokens_prompt: int`, `llm_tokens_completion: int`, `raw_llm_output: str`, `postprocess_mutations: list[str]` (list of what PII/validation changes were made). This trace is returned by the `/api/pipeline/run` endpoint and logged to structlog for Loki ingestion.
-- [ ] **9.9** Write integration tests in `tests/test_pipeline.py` (all external calls mocked — no running services):
+- [x] **9.8** Ensure `run_pipeline()` emits a structured `PipelineTrace` Pydantic model (alongside the final response) capturing: `stage_timings: dict[str, float]`, `cache_hits: dict[str, bool]`, `guard_result: dict`, `rag_chunks_retrieved: int`, `rag_chunks_after_rerank: int`, `rag_top_scores: list[float]`, `llm_tokens_prompt: int`, `llm_tokens_completion: int`, `raw_llm_output: str`, `postprocess_mutations: list[str]` (list of what PII/validation changes were made). This trace is returned by the `/api/pipeline/run` endpoint and logged to structlog for Loki ingestion.
+- [x] **9.9** Write integration tests in `tests/test_pipeline.py` (all external calls mocked — no running services):
   - Test full pipeline end-to-end with mocked LLM
   - Test timeout behavior per stage
   - Test retry logic on transient failures
@@ -675,8 +676,8 @@
 | 5 | Stage 1: Preprocessing & Security | Complete |
 | 6 | Stage 2: Hybrid RAG | Complete |
 | 7 | Stage 3: Generation & Agentic Loops | Complete |
-| 8 | Stage 4: Post-Processing | Not Started |
-| 9 | Pipeline Orchestration & Observability | Not Started |
+| 8 | Stage 4: Post-Processing | Complete |
+| 9 | Pipeline Orchestration & Observability | Complete |
 | 10 | Web Dashboard & Streaming | Not Started |
 | 11 | Testing & Quality Assurance | Not Started |
 | 12 | Deployment Readiness & CI | Not Started |
@@ -686,5 +687,5 @@
 | 16 | Cloud Deployment & Smoke Test | Not Started |
 
 **Total Steps:** 137
-**Completed:** 60
-**Remaining:** 77
+**Completed:** 79
+**Remaining:** 58

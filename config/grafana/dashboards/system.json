@@ -1,0 +1,65 @@
+{
+  "title": "System Health",
+  "uid": "leeg-system",
+  "tags": ["leeg", "system"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Request Rate (req/min)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(rate(http_requests_total[5m])) * 60",
+        "legendFormat": "req/min"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "HTTP 5xx Error Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) * 60",
+        "legendFormat": "5xx/min"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "HTTP P95 Response Time (s)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+        "legendFormat": "P95 latency"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "HTTP Request Rate by Endpoint",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(rate(http_requests_total[5m])) by (handler)",
+        "legendFormat": "{{handler}}"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Pipeline Errors Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(rate(pipeline_errors_total[5m])) by (stage)",
+        "legendFormat": "{{stage}}"
+      }]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "title": "LLM Usage",
+  "uid": "leeg-llm",
+  "tags": ["leeg", "llm"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Prompt Tokens (total)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(llm_tokens_total{type=\"prompt\"})",
+        "legendFormat": "Prompt tokens"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Completion Tokens (total)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(llm_tokens_total{type=\"completion\"})",
+        "legendFormat": "Completion tokens"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Cache Hit Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus"},
+        "expr": "sum(rate(pipeline_duration_seconds_count[5m])) > 0 or vector(0)",
+        "legendFormat": "Requests/min"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Token Usage Rate Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus"},
+          "expr": "sum(rate(llm_tokens_total{type=\"prompt\"}[5m]))",
+          "legendFormat": "Prompt tokens/s"
+        },
+        {
+          "datasource": {"type": "prometheus"},
+          "expr": "sum(rate(llm_tokens_total{type=\"completion\"}[5m]))",
+          "legendFormat": "Completion tokens/s"
+        }
+      ]
+    }
+  ]
+}

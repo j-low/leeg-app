@@ -19,17 +19,22 @@ The agent loop terminates when:
   (b) iteration count hits MAX_ITERATIONS
   (c) stop_reason == "max_tokens"  (treated as a final answer)
 
-Returns a dict:
+run_agent() returns a dict:
   {
-    "answer":        str,   # final text from Claude
-    "tool_calls":    list,  # all tool calls made [{name, input, result}]
-    "iterations":    int,   # number of LLM turns
-    "stop_reason":   str,   # last stop_reason from Claude
+    "answer":             str,   # final text from Claude
+    "tool_calls":         list,  # all tool calls made [{name, input, result}]
+    "iterations":         int,   # number of LLM turns
+    "stop_reason":        str,   # last stop_reason from Claude
+    "tokens_prompt":      int,   # accumulated input tokens across all turns
+    "tokens_completion":  int,   # accumulated output tokens across all turns
   }
+
+stream_agent() is the streaming variant (see docstring below).
 """
 import asyncio
 import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -49,13 +54,15 @@ TOTAL_TIMEOUT = 120  # seconds for the entire agent run
 # ── LangGraph state ───────────────────────────────────────────────────────────
 
 class AgentState(TypedDict):
-    messages:      list[dict]          # full conversation history
-    system:        str                 # system prompt (constant across turns)
-    tool_calls:    list[dict]          # audit log: [{name, input, result}]
-    iterations:    int                 # current iteration count
-    answer:        str                 # final text answer (set on termination)
-    stop_reason:   str                 # last Claude stop_reason
-    db:            Any                 # AsyncSession (not serialisable; held in state)
+    messages:           list[dict]   # full conversation history
+    system:             str          # system prompt (constant across turns)
+    tool_calls:         list[dict]   # audit log: [{name, input, result}]
+    iterations:         int          # current iteration count
+    answer:             str          # final text answer (set on termination)
+    stop_reason:        str          # last Claude stop_reason
+    tokens_prompt:      int          # accumulated input tokens across all turns
+    tokens_completion:  int          # accumulated output tokens across all turns
+    db:                 Any          # AsyncSession (not serialisable; held in state)
 
 
 # ── Graph nodes ───────────────────────────────────────────────────────────────
@@ -72,13 +79,17 @@ async def _node_call_llm(state: AgentState) -> AgentState:
         {"role": "assistant", "content": response.content}
     ]
 
+    usage = getattr(response, "usage", None)
     return {
         **state,
-        "messages":    updated_messages,
-        "stop_reason": response.stop_reason,
-        "iterations":  state["iterations"] + 1,
+        "messages":          updated_messages,
+        "stop_reason":       response.stop_reason,
+        "iterations":        state["iterations"] + 1,
         # Stash the answer if this turns out to be the final turn
-        "answer":      extract_text(response) or state.get("answer", ""),
+        "answer":            extract_text(response) or state.get("answer", ""),
+        # Accumulate token counts across all iterations
+        "tokens_prompt":     state.get("tokens_prompt", 0) + (usage.input_tokens if usage else 0),
+        "tokens_completion":  state.get("tokens_completion", 0) + (usage.output_tokens if usage else 0),
     }
 
 
@@ -219,13 +230,15 @@ async def run_agent(
     )
 
     initial_state: AgentState = {
-        "messages":    [{"role": "user", "content": user_msg}],
-        "system":      system,
-        "tool_calls":  [],
-        "iterations":  0,
-        "answer":      "",
-        "stop_reason": "",
-        "db":          db,
+        "messages":          [{"role": "user", "content": user_msg}],
+        "system":            system,
+        "tool_calls":        [],
+        "iterations":        0,
+        "answer":            "",
+        "stop_reason":       "",
+        "tokens_prompt":     0,
+        "tokens_completion": 0,
+        "db":                db,
     }
 
     try:
@@ -250,8 +263,115 @@ async def run_agent(
     )
 
     return {
-        "answer":      final_state["answer"],
-        "tool_calls":  final_state["tool_calls"],
-        "iterations":  final_state["iterations"],
-        "stop_reason": final_state["stop_reason"],
+        "answer":            final_state["answer"],
+        "tool_calls":        final_state["tool_calls"],
+        "iterations":        final_state["iterations"],
+        "stop_reason":       final_state["stop_reason"],
+        "tokens_prompt":     final_state.get("tokens_prompt", 0),
+        "tokens_completion": final_state.get("tokens_completion", 0),
     }
+
+
+async def stream_agent(
+    structured_input: StructuredInput,
+    rag_context: list[dict],
+    context: dict,
+    db: AsyncSession,
+) -> AsyncGenerator[dict, None]:
+    """Streaming variant of run_agent for the dashboard SSE channel.
+
+    Yields typed event dicts as the agent works. Does NOT yield the final
+    "done" event — the caller (run_pipeline_stream) handles post-processing
+    and emits "done" after accumulating the answer.
+
+    Event types:
+        {type: "answer_token", text: str}   — streamed text token from Claude
+        {type: "tool_start",   name: str, input: dict}  — tool dispatched
+        {type: "tool_result",  name: str, result: any}  — tool execution complete
+
+    Never raises: asyncio.TimeoutError yields a fallback answer_token then
+    returns; other exceptions are re-raised for run_pipeline_stream to catch
+    and convert to {type: "error"} events.
+    """
+    from app.stages.generation.generate import _get_client, MODEL, MAX_TOKENS, TOOL_SCHEMAS
+
+    from app.stages.generation.prompts import render_prompt
+    system, user_msg = render_prompt(structured_input, rag_context, context)
+    messages = [{"role": "user", "content": user_msg}]
+    client = _get_client()
+
+    log.info(
+        "stream_agent.start intent=%s team_id=%s",
+        structured_input.intent,
+        context.get("team_id"),
+    )
+
+    iterations = 0
+    try:
+        while iterations < MAX_ITERATIONS:
+            iterations += 1
+
+            try:
+                async with client.messages.stream(
+                    model=MODEL,
+                    system=system,
+                    messages=messages,
+                    tools=TOOL_SCHEMAS,
+                    max_tokens=MAX_TOKENS,
+                ) as stream:
+                    # Yield text tokens as they arrive
+                    async for text in stream.text_stream:
+                        yield {"type": "answer_token", "text": text}
+
+                    final_msg = await stream.get_final_message()
+
+            except asyncio.TimeoutError:
+                log.error("stream_agent.step_timeout iteration=%d", iterations)
+                yield {"type": "answer_token", "text": "Sorry, the request took too long."}
+                return
+
+            # Append assistant turn to conversation history
+            messages.append({"role": "assistant", "content": final_msg.content})
+
+            if final_msg.stop_reason != "tool_use":
+                # end_turn or max_tokens — done streaming
+                break
+
+            # ── Execute tool calls ────────────────────────────────────────────
+            tool_results = []
+            for block in final_msg.content:
+                if getattr(block, "type", None) != "tool_use":
+                    continue
+
+                yield {"type": "tool_start", "name": block.name, "input": block.input}
+
+                try:
+                    result = await asyncio.wait_for(
+                        dispatch_tool(block.name, block.input, db),
+                        timeout=STEP_TIMEOUT,
+                    )
+                    yield {"type": "tool_result", "name": block.name, "result": result}
+                    tool_results.append({
+                        "type":        "tool_result",
+                        "tool_use_id": block.id,
+                        "content":     json.dumps(result),
+                    })
+                except Exception as exc:
+                    log.warning("stream_agent.tool_error name=%s error=%s", block.name, exc)
+                    error_payload = {"error": str(exc)}
+                    yield {"type": "tool_result", "name": block.name, "result": error_payload}
+                    tool_results.append({
+                        "type":        "tool_result",
+                        "tool_use_id": block.id,
+                        "content":     json.dumps(error_payload),
+                        "is_error":    True,
+                    })
+
+            messages.append({"role": "user", "content": tool_results})
+
+        if iterations >= MAX_ITERATIONS:
+            log.warning("stream_agent.max_iterations_reached iterations=%d", iterations)
+
+    except Exception:
+        # Re-raise — run_pipeline_stream catches and yields {type: "error"}
+        raise

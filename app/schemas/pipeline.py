@@ -69,3 +69,32 @@ class PostprocessedResponse(BaseModel):
 
     # Dashboard channel only (None for SMS)
     dashboard_payload: dict | None = None
+
+
+class PipelineTrace(BaseModel):
+    """Observability trace emitted alongside PostprocessedResponse by the Phase 9 orchestrator.
+
+    Returned by /api/pipeline/run for the eval runner; also logged to structlog for Loki ingestion.
+    All fields have safe defaults — partial traces are valid when a stage short-circuits.
+    """
+    # Per-stage wall-clock timing (seconds)
+    stage_timings: dict[str, float] = Field(default_factory=dict)
+
+    # Redis cache hit/miss ("pipeline" key = full-pipeline cache)
+    cache_hits: dict[str, bool] = Field(default_factory=dict)
+
+    # Stage 1 guard result
+    guard_result: dict = Field(default_factory=dict)
+
+    # Stage 2 RAG metrics
+    rag_chunks_retrieved: int = 0       # before re-rank
+    rag_chunks_after_rerank: int = 0    # after re-rank (top-k kept)
+    rag_top_scores: list[float] = Field(default_factory=list)
+
+    # Stage 3 LLM token usage (accumulated across all agent iterations)
+    llm_tokens_prompt: int = 0
+    llm_tokens_completion: int = 0
+    raw_llm_output: str = ""            # unredacted final answer (for eval only; not logged in full)
+
+    # Stage 4 post-processing mutations
+    postprocess_mutations: list[str] = Field(default_factory=list)

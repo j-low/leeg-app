@@ -42,5 +42,8 @@ class Settings(BaseSettings):
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
 
+    # Observability (Stage 9)
+    otel_endpoint: str = ""  # OTLP gRPC endpoint, e.g. "http://otel-collector:4317"
+
 
 settings = Settings()
