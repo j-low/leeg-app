@@ -307,7 +307,7 @@
 
 **Pipeline concern:** Captain-facing UI with real-time AI interaction via Server-Sent Events. The dashboard provides an alternative to SMS for complex workflows (lineup planning, roster management) and demonstrates streaming LLM output -- a key production pattern for user experience during slow inference.
 
-- [ ] **10.1** Set up Next.js frontend structure:
+- [x] **10.1** Set up Next.js frontend structure:
   ```
   frontend/src/
     app/
@@ -333,43 +333,43 @@
       auth.ts            # Auth utilities, token management
       types.ts           # TypeScript interfaces matching backend schemas
   ```
-- [ ] **10.2** Implement authentication pages:
+- [x] **10.2** Implement authentication pages:
   - Login page with email/password form
   - Registration page for captains
   - JWT token storage (httpOnly cookie or secure localStorage)
   - Auth context provider with `useAuth` hook
   - Protected route wrapper (redirect to login if unauthenticated)
-- [ ] **10.3** Implement Team management page:
+- [x] **10.3** Implement Team management page:
   - List captain's teams
   - Create/edit team form
   - Team detail view with linked seasons
-- [ ] **10.4** Implement Roster management page:
+- [x] **10.4** Implement Roster management page:
   - Player list with position prefs, sub flag, skill notes
   - Add/edit/remove player forms
   - Bulk import (CSV upload)
-- [ ] **10.5** Implement Season & Game management:
+- [x] **10.5** Implement Season & Game management:
   - Season CRUD (create, open/close, link teams)
   - Game list within season (date, time, location, attendance summary)
   - Schedule import (CSV/iCal file upload -> backend parsing)
   - Attendance grid: visual matrix of players vs games with status indicators
-- [ ] **10.6** Create `app/routes/chat.py` on backend:
+- [x] **10.6** Create `app/routes/chat.py` on backend:
   - `POST /api/chat/stream`: JWT-authenticated SSE endpoint for dashboard channel only
   - Accepts `{"input": str, "context": dict}` — sets `context["channel"] = "dashboard"` and delegates to `run_pipeline_stream()` (Phase 9.5)
   - Serializes each yielded event dict to `data: <json>\n\n` SSE format; flushes immediately
   - Event types (defined by `run_pipeline_stream()`): `thinking`, `tool_start`, `tool_result`, `answer_token`, `done`, `error`
   - Connection keepalive: yield `data: {"type": "ping"}\n\n` every 15s if no events
   - Client disconnect detection: wrap generator in try/finally; cancel pipeline task on disconnect
-- [ ] **10.7** Implement AI Chat interface on frontend:
+- [x] **10.7** Implement AI Chat interface on frontend:
   - Chat message list with streaming text display
   - Input field for natural language queries
   - EventSource/fetch with ReadableStream for SSE consumption
   - Display tool call indicators (e.g., "Updating attendance...", "Checking roster...")
   - Chat history (session-scoped, stored in React state)
-- [ ] **10.8** Implement Lineup view:
+- [x] **10.8** Implement Lineup view:
   - Display proposed lineups (from AI or manual)
   - Visual line groupings (Forward lines, Defense pairs, Goalies)
   - Lineup history for past games
-- [ ] **10.9** Add responsive design and navigation:
+- [x] **10.9** Add responsive design and navigation:
   - Sidebar navigation for dashboard sections
   - Mobile-friendly layout (captains may use phone browser)
   - Loading states, error boundaries, toast notifications
@@ -383,27 +383,27 @@
 
 > **Note:** Systematic LLM output quality evaluation (LLM-as-judge, test-set scoring, regression tracking) is intentionally out of scope for this project and lives in the companion eval runner described in Phase 13. The tests here cover functional correctness and pipeline behavior, not model output quality.
 
-- [ ] **11.1** Write comprehensive unit tests for each pipeline stage:
+- [x] **11.1** Write comprehensive unit tests for each pipeline stage:
   - `tests/test_preprocess.py`: entity extraction, intent classification, guard detection (min 15 test cases)
   - `tests/test_rag.py`: embedding, retrieval, re-ranking, compression (min 10 test cases)
   - `tests/test_generate.py`: prompt assembly, tool dispatch, agent loop (min 10 test cases)
   - `tests/test_postprocess.py`: PII redaction, validation, formatting (min 10 test cases)
-- [ ] **11.2** Write integration tests in `tests/test_integration.py`:
+- [x] **11.2** Write integration tests in `tests/test_integration.py`:
   - Full pipeline: SMS input -> structured output (with mocked LLM)
   - Auth flow: register -> login -> access protected route -> token refresh
   - SMS flow: webhook receipt -> Celery task -> pipeline -> SMS response
   - CRUD flow: create team -> add players -> create season -> create game -> record attendance
-- [ ] **11.3** Write end-to-end tests in `tests/test_e2e.py`:
+- [x] **11.3** Write end-to-end tests in `tests/test_e2e.py`:
   - Scenario: Captain sends SMS "Bob is out for Tuesday" -> attendance updated, sub request sent
   - Scenario: Captain asks "Balance lines for next game" -> lineup generated with explanation
   - Scenario: Player sends "I want to play defense" -> preference updated
   - Scenario: Captain broadcasts survey -> players respond -> responses collected
-- [ ] **11.4** Create Locust load test in `tests/locustfile.py`:
+- [x] **11.4** Create Locust load test in `tests/locustfile.py`:
   - Simulate concurrent SMS webhooks (target: 10 req/s sustained)
   - Simulate concurrent dashboard API calls
   - Measure p50/p95/p99 latencies, error rates
-- [ ] **11.5** Add `pytest.ini` / `pyproject.toml` test configuration with markers (unit, integration, e2e, load)
-- [ ] **11.6** Create test fixtures and factories in `tests/conftest.py` (database fixtures, mock Twilio, mock Ollama)
+- [x] **11.5** Add `pytest.ini` / `pyproject.toml` test configuration with markers (unit, integration, e2e, load)
+- [x] **11.6** Create test fixtures and factories in `tests/conftest.py` (database fixtures, mock Twilio, mock Ollama)
 - [ ] **11.7** Verify all tests pass; fix any discovered bugs
 
 ---
@@ -412,226 +412,72 @@
 
 **Pipeline concern:** Production hardening -- healthchecks ensure container orchestration can restart failed services, CI ensures code quality gates, and environment configuration ensures secure secret management. This is the final layer ensuring the system is deployable and maintainable.
 
-- [ ] **12.1** Finalize `docker-compose.yml`:
-  - Add healthchecks to all services (Postgres, Redis, Qdrant, Ollama, FastAPI, Celery worker)
+- [x] **12.1** Finalize `docker-compose.yml`:
+  - Add healthchecks to all services (Postgres, Redis, Qdrant, FastAPI)
   - Add restart policies (`unless-stopped`)
-  - Configure resource limits (memory caps for LLM container)
+  - Configure resource limits (CPU/memory caps per service)
   - Add named volumes for all persistent data
-  - Create `docker-compose.override.yml` for local dev overrides
-- [ ] **12.2** Create production `Dockerfile` for FastAPI app:
-  - Multi-stage build (builder + runtime)
-  - Non-root user
-  - Health check instruction
-  - Proper signal handling (graceful shutdown)
-- [ ] **12.3** Create production `Dockerfile` for Next.js frontend:
-  - Multi-stage build with `next build` + `next start`
-  - Static asset optimization
-- [ ] **12.4** Create `.env.production.example` with production-specific settings documented
-- [ ] **12.5** Create CI configuration (`.github/workflows/ci.yml`):
+  - Create `docker-compose.override.yml` for local dev overrides (hot-reload bind mounts)
+- [x] **12.2** Create production `Dockerfile` for FastAPI app:
+  - 3-stage multi-stage build (base → deps → runtime)
+  - Non-root user (`appuser`)
+  - Health check instruction (`curl /health`)
+  - 2-worker uvicorn in production
+- [x] **12.3** Create production `Dockerfile` for Next.js frontend:
+  - 3-stage multi-stage build (deps → builder → runner)
+  - `output: "standalone"` in `next.config.ts` for minimal image
+  - Non-root user (`nextjs`)
+- [x] **12.4** Create `.env.production.example` with production-specific settings documented
+- [x] **12.5** Create CI configuration (`.github/workflows/ci.yml`):
   - Lint: `ruff` (Python), `eslint` (TypeScript)
   - Type check: `mypy` (Python), `tsc` (TypeScript)
-  - Unit tests: `pytest -m unit`
-  - Integration tests: `pytest -m integration` (with Postgres + Redis services)
-  - Build verification: Docker build succeeds
-- [ ] **12.6** Add `Makefile` with common commands:
+  - Tests: `pytest -m "unit or integration or e2e"` with coverage upload
+  - Build verification: both Docker images build successfully
+- [x] **12.6** Add `Makefile` with common commands:
   - `make dev` -- start full stack locally
-  - `make test` -- run all tests
-  - `make lint` -- run all linters
-  - `make migrate` -- run Alembic migrations
-  - `make seed` -- seed sample data
-  - `make ingest` -- run Qdrant ingestion
+  - `make test` / `make test-unit` / `make test-integration` / `make test-e2e`
+  - `make lint` / `make typecheck` -- ruff + eslint, mypy + tsc
+  - `make migrate` / `make seed` / `make ingest`
+  - `make load-test` -- Locust load test
 - [ ] **12.7** Final verification: clean `docker compose up`, run full test suite, verify Grafana dashboards show pipeline metrics, send test SMS through complete flow
-- [ ] **12.8** Update `README.md` with complete setup instructions, architecture diagram (text-based), and development workflow
+- [x] **12.8** Update `README.md` with complete setup instructions, architecture diagram (text-based), and development workflow
 
 ---
 
 ---
 
-## Phase 13 - Eval Runner (Companion Project)
+## Phase 13 - Eval Runner (Companion Project) ⟶ leeg-eval
 
-**Pipeline concern:** LLM output quality evaluation -- this phase establishes a *separate companion project* (`leeg-eval/`) that treats the Leeg app as a black box and evaluates pipeline output quality systematically. This separation is intentional and reflects how eval should be structured in real client work: the eval system is a tool you bring to any AI pipeline, not something baked into the app itself.
+> **Moved.** This phase is tracked in full in the `leeg-eval` companion project. See [leeg-eval/PROJECT_CHECKLIST.md](../leeg-eval/PROJECT_CHECKLIST.md) — Phases 1–5 cover the complete eval runner: project initialization, test set construction, scoring layer (LLM-as-judge + deterministic checkers), batch runner, reporting, and CLI.
 
-> **Prerequisite:** Phase 9 must be complete (specifically steps 9.7 and 9.8) so that the `/api/pipeline/run` and `/api/pipeline/run-batch` endpoints are available with full `PipelineTrace` responses.
+> **Prerequisite from this project:** Steps 9.7 and 9.8 must be complete so that `/api/pipeline/run` and `/api/pipeline/run-batch` return full `PipelineTrace` responses.
 
-> **Why a separate project:** The eval runner has different dependencies, different lifecycle (run on demand, not in production), and different concerns than the app. Keeping it separate also makes it reusable -- you can point it at any pipeline that exposes a compatible endpoint contract.
-
-- [ ] **13.1** Initialize a new sibling repo `leeg-eval/` (separate from the main `leeg/` repo):
-  - Python 3.12 venv, `requirements.txt`: `httpx`, `pytest`, `pytest-asyncio`, `pydantic`, `structlog`, `rich`, `pandas`, `openai` (for LLM-as-judge calls to a frontier model), `jinja2`, `python-dotenv`
-  - `.env.example`: `LEEG_API_URL` (points to running Leeg app), `LEEG_API_TOKEN` (admin JWT), `JUDGE_MODEL` (e.g. `gpt-4o-mini` or `claude-haiku`), `JUDGE_API_KEY`
-  - Directory structure:
-    ```
-    leeg-eval/
-      test_sets/         # JSONL files of {input, context, expected_intent, tags[]}
-      judges/            # Judge prompt templates per evaluation dimension
-      runners/
-        batch_runner.py  # Sends test set to /api/pipeline/run-batch, collects traces
-        single_runner.py # Interactive single-input runner for debugging
-      scorers/
-        llm_judge.py     # LLM-as-judge scoring against rubric
-        deterministic.py # Rule-based checks (PII present?, response within length?, guard fired correctly?)
-      reports/
-        reporter.py      # Aggregate scores, render pass/fail table, save results to JSONL
-      conftest.py
-      run_eval.py        # CLI entrypoint: python run_eval.py --test-set test_sets/sms_flows.jsonl
-    ```
-
-- [ ] **13.2** Build the test set for SMS intent flows in `test_sets/sms_flows.jsonl`:
-  - Minimum 30 test cases as JSONL, each with: `input` (raw SMS text), `context` (channel, from_phone), `expected_intent`, `expected_action` (e.g. attendance_update), `tags` (happy_path / edge_case / adversarial / security), `notes`
-  - Include: happy path attendance updates, ambiguous inputs, out-of-scope messages, injection attempts (should trigger guard), player preference updates, lineup requests
-  - Include 5+ adversarial cases specifically targeting the prompt injection guard (these should be *rejected* by the pipeline -- a correct guard rejection is a passing score)
-
-- [ ] **13.3** Build the test set for lineup suggestion flows in `test_sets/lineup_flows.jsonl`:
-  - Minimum 15 test cases covering: balanced line requests, short-bench scenarios (< 12 skaters), goalie-absent scenarios, specific player exclusion requests, conflicting preference edge cases
-  - Each case includes a `scoring_rubric` field with the specific criteria the judge should evaluate against (e.g. "lineup should respect position_prefs where possible", "explanation should cite specific player attributes")
-
-- [ ] **13.4** Build the LLM-as-judge scorer in `scorers/llm_judge.py`:
-  - Accepts: `pipeline_input`, `pipeline_output`, `pipeline_trace`, `scoring_rubric`
-  - Calls the judge model with a structured prompt asking it to score on: **accuracy** (did it do the right thing?), **groundedness** (is the response supported by retrieved context, not hallucinated?), **safety** (no PII leaked, appropriate refusals), **format** (SMS-appropriate length and tone)
-  - Returns: `EvalResult` Pydantic model with per-dimension scores (0-1 float), pass/fail bool, and `reasoning` string from the judge
-  - Use structured output (JSON mode) for the judge call so scores are parseable
-
-- [ ] **13.5** Build deterministic checkers in `scorers/deterministic.py`:
-  - `check_no_pii_in_output(output: str) -> bool`: run Presidio on the pipeline output, fail if PII detected
-  - `check_guard_fired_correctly(trace: PipelineTrace, expected_safe: bool) -> bool`: compare guard decision in trace to expectation
-  - `check_response_length(output: str, channel: str) -> bool`: fail if SMS output > 1600 chars
-  - `check_intent_match(trace: PipelineTrace, expected_intent: str) -> bool`: check extracted intent matches expected
-  - These run on every test case without LLM calls -- fast, free, and catch obvious failures before spending tokens on judge calls
-
-- [ ] **13.6** Build the batch runner in `runners/batch_runner.py`:
-  - Load test set JSONL, send to `/api/pipeline/run-batch`, collect responses + traces
-  - Run deterministic checks on all results first
-  - Run LLM judge on results that passed deterministic checks (avoids burning judge tokens on obviously broken outputs)
-  - Aggregate into a results list
-
-- [ ] **13.7** Build the reporter in `reports/reporter.py`:
-  - Aggregate pass rates per dimension (accuracy, groundedness, safety, format)
-  - Aggregate pass rates per tag (happy_path, edge_case, adversarial, security)
-  - Render a rich terminal table using `rich`
-  - Save full results to a timestamped JSONL file in `reports/runs/`
-  - Print a single-line summary: `PASS_RATE: 87% | accuracy: 91% | groundedness: 84% | safety: 100% | format: 96% | (30/30 cases evaluated)`
-
-- [ ] **13.8** Wire up the CLI entrypoint `run_eval.py`:
-  - `python run_eval.py --test-set test_sets/sms_flows.jsonl` runs the full eval loop and prints the report
-  - `python run_eval.py --input "Bob is out Tuesday" --context '{"channel":"sms"}' --debug` runs a single input and prints the full trace + judge reasoning for debugging
-  - `python run_eval.py --compare runs/2024-01-01.jsonl runs/2024-01-15.jsonl` diffs two run reports to show score changes (regression detection)
-
-- [ ] **13.9** Validate the eval runner end-to-end:
-  - Start the Leeg app locally, obtain an admin JWT
-  - Run `python run_eval.py --test-set test_sets/sms_flows.jsonl`
-  - Verify: scores are plausible, adversarial cases show guard firing correctly, report renders cleanly
-  - Intentionally break something in the pipeline (e.g. disable PII redaction) and verify the eval catches it
-
-- [ ] **13.10** Document in `leeg-eval/README.md`:
-  - What the eval runner does and how it relates to the main app
-  - How to add new test cases
-  - How to interpret scores and diagnose failures using the trace output
-  - How to run a regression comparison before/after a pipeline change
+| leeg-app step | leeg-eval equivalent |
+|---------------|----------------------|
+| 13.1 — Initialize leeg-eval repo | [Phase 1](../leeg-eval/PROJECT_CHECKLIST.md) — Project Initialization & Structure |
+| 13.2–13.3 — Build test sets | [Phase 2](../leeg-eval/PROJECT_CHECKLIST.md) — Test Set Construction |
+| 13.4–13.5 — Build scorers | [Phase 3](../leeg-eval/PROJECT_CHECKLIST.md) — Scoring Layer |
+| 13.6 — Build batch runner | [Phase 4](../leeg-eval/PROJECT_CHECKLIST.md) — Runner & Batch Infrastructure |
+| 13.7–13.10 — Reporting, CLI, validation | [Phase 5](../leeg-eval/PROJECT_CHECKLIST.md) — Reporting, CLI & Validation |
 
 ---
 
-## Phase 14 - Optimization Lab (Companion Project, extends leeg-eval/)
+## Phase 14 - Optimization Lab (Companion Project, extends leeg-eval/) ⟶ leeg-eval
 
-**Pipeline concern:** Systematic pipeline optimization -- this phase adds a structured experimentation layer to `leeg-eval/` that surveys every major optimization modality: prompt engineering, retrieval tuning, context management, guard calibration, and inference cost/performance tradeoffs. The core mechanic is a lightweight experiment tracker that tags each eval run with the parameter values that produced it, enabling before/after comparison and causal attribution of score changes.
+> **Moved.** This phase is tracked in full in the `leeg-eval` companion project. See [leeg-eval/PROJECT_CHECKLIST.md](../leeg-eval/PROJECT_CHECKLIST.md) — Phases 6–13 cover the complete optimization lab: MLflow experiment tracking infrastructure, five experiment families (prompt, retrieval, context/compression, guard calibration, inference cost/performance), the Pareto-frontier comparator, combined best-config synthesis, CI, and the Makefile.
 
-> **Prerequisite:** Phase 13 must be complete. The optimization lab is built on top of the eval runner -- you optimize by running evals, changing a lever, and re-evaluating.
+> **Prerequisite from this project:** Phase 13 (leeg-eval Phases 1–5) must be complete before starting the optimization lab.
 
-> **Design principle:** Each optimization modality is isolated. You change one family of parameters at a time, run the full test set, and compare. This is the same discipline as controlled experimentation in statistics -- you already think this way.
-
-- [ ] **14.1** Add experiment tracking infrastructure to `leeg-eval/`:
-  - Add dependencies to `requirements.txt`: `mlflow` (lightweight local experiment tracking)
-  - Extend the directory structure:
-    ```
-    leeg-eval/
-      experiments/
-        configs/           # YAML files defining parameter variants per experiment
-          prompt_variants/
-          retrieval_variants/
-          context_variants/
-          guard_variants/
-          inference_variants/
-        results/           # MLflow tracking store (local)
-      optimizers/
-        experiment_runner.py  # Loads config, runs eval, logs params + metrics to MLflow
-        comparator.py         # Compare two or more experiment runs, surface winning config
-    ```
-  - Initialize MLflow local tracking store: `mlflow.set_tracking_uri("experiments/results")`
-  - Each experiment run logs: all parameter values as MLflow params, all eval scores as MLflow metrics, run timestamp and test set used as tags
-
-- [ ] **14.2** Implement Experiment 1 — **Prompt Optimization**:
-  - Create `experiments/configs/prompt_variants/` with 4 YAML configs varying:
-    - System prompt verbosity (terse vs. detailed instructions)
-    - Few-shot examples (0-shot vs. 3-shot with hockey-domain examples)
-    - Output format instructions (explicit JSON schema in prompt vs. implicit)
-    - Instruction ordering (role first vs. constraints first vs. examples first)
-  - For each variant: the config specifies which prompt template file to use; `experiment_runner.py` swaps the template, runs the full SMS + lineup test sets, logs results
-  - Expected learning: prompts are hyperparameters; instruction ordering and few-shot examples measurably affect accuracy and format scores
-  - Document findings in `experiments/configs/prompt_variants/FINDINGS.md`: which variant won, by how much, and the hypothesis for why
-
-- [ ] **14.3** Implement Experiment 2 — **Retrieval Optimization**:
-  - Create `experiments/configs/retrieval_variants/` with configs varying:
-    - Chunk size: 256 / 512 / 1024 tokens
-    - Chunk overlap: 0 / 50 / 100 tokens
-    - Top-k retrieved before reranking: 5 / 10 / 20
-    - Reranking threshold: vary the score cutoff below which chunks are dropped
-    - Hybrid search weight: dense-only / 70-30 dense-sparse / 50-50
-  - Each variant requires re-ingesting to Qdrant with new chunk settings -- `experiment_runner.py` should call the ingestion script with the specified params before running eval
-  - Track an additional metric per run: `avg_chunks_used` (from `PipelineTrace.rag_chunks_after_rerank`) -- this captures the cost/quality tradeoff directly
-  - Expected learning: chunk size and top-k have the largest effect on groundedness; hybrid weighting matters more for ambiguous queries than precise ones
-  - Document findings in `FINDINGS.md`
-
-- [ ] **14.4** Implement Experiment 3 — **Context & Compression Optimization**:
-  - Create `experiments/configs/context_variants/` with configs varying:
-    - LLMLingua compression ratio: 0.5 / 0.7 / 0.9 (1.0 = no compression)
-    - Context ordering: retrieved chunks in score order vs. reversed vs. most-relevant first and last (lost-in-the-middle mitigation)
-    - Max context tokens passed to LLM: 512 / 1024 / 2048
-  - Track additional metrics: `avg_prompt_tokens` and `avg_completion_tokens` from `PipelineTrace` -- this makes the cost/quality tradeoff visible as actual numbers
-  - Expected learning: aggressive compression degrades groundedness measurably; context ordering has a real but smaller effect; the prompt token count is a direct cost proxy
-  - Document findings in `FINDINGS.md`
-
-- [ ] **14.5** Implement Experiment 4 — **Guard Calibration**:
-  - Create `experiments/configs/guard_variants/` with configs varying:
-    - Llama Guard sensitivity threshold (if configurable): strict / balanced / permissive
-    - Regex rule set: minimal (obvious injections only) / standard / aggressive (broader patterns)
-    - Guard ordering: regex-first-then-LLamaGuard (current) vs. LlamaGuard-only vs. regex-only
-  - This experiment requires a dedicated test set: `test_sets/security_flows.jsonl` with minimum 20 cases -- 10 genuine injection attempts (should be rejected), 10 legitimate edge-case messages that could trigger false positives (should pass)
-  - Track two competing metrics: `true_positive_rate` (injections correctly caught) and `false_positive_rate` (legitimate messages incorrectly rejected) -- the tension between these is the calibration problem
-  - Expected learning: guard tuning is a precision/recall tradeoff, not a single dial; regex catches cheap obvious cases; LlamaGuard handles sophisticated attempts but adds latency
-  - Document findings in `FINDINGS.md`
-
-- [ ] **14.6** Implement Experiment 5 — **Inference Cost/Performance Optimization**:
-  - Create `experiments/configs/inference_variants/` with configs varying:
-    - Temperature: 0.0 / 0.3 / 0.7 (affects determinism and response variety)
-    - Max tokens: 256 / 512 / 1024 (output length cap)
-    - Quantization level: compare Q4 vs Q5 vs Q8 GGUF variants if available via Ollama
-    - Redis cache TTL for full pipeline results: 30s / 60s / 300s
-  - Track latency metrics from `PipelineTrace.stage_timings`: `p50_latency_ms`, `p95_latency_ms` per stage, total end-to-end
-  - Track cost proxy: `total_tokens_per_run` = sum of all `llm_tokens_prompt + llm_tokens_completion` across test set
-  - Expected learning: temperature 0.0 improves format consistency but can make lineup suggestions feel mechanical; Q4 vs Q5 quality delta is measurable on groundedness; cache TTL is a pure cost lever with no quality effect
-  - Document findings in `FINDINGS.md`
-
-- [ ] **14.7** Build the comparator in `optimizers/comparator.py`:
-  - `python compare.py --experiments prompt_exp_1 prompt_exp_2 prompt_exp_3` queries MLflow for the named runs and renders a comparison table showing: each parameter value, each metric score, delta vs. baseline, and a winning configuration recommendation
-  - `python compare.py --best --metric groundedness` queries all runs across all experiments and returns the single configuration with the highest groundedness score
-  - `python compare.py --pareto --metrics groundedness,avg_prompt_tokens` renders a simple Pareto frontier: configurations that are not dominated on both quality and cost simultaneously
-  - The Pareto command is the most important one to understand -- it surfaces the real optimization question, which is never "maximize quality" in isolation but "find the best quality achievable within a cost constraint"
-
-- [ ] **14.8** Build a combined "best config" assembler:
-  - After running all five experiment families, create `experiments/configs/optimized.yaml` that assembles the winning parameter from each experiment into a single combined configuration
-  - Run a final eval pass with the combined config and compare to the original baseline config
-  - Document the total score improvement and cost change in `experiments/OPTIMIZATION_SUMMARY.md`: a narrative of what you changed, what moved, and what the optimized pipeline looks like vs. the original
-  - This document is the artifact you'd show a client or include in a portfolio -- it demonstrates not just that you built the pipeline but that you can systematically improve it
-
-- [ ] **14.9** Extend the CLI in `run_eval.py` with optimization commands:
-  - `python run_eval.py --experiment experiments/configs/prompt_variants/few_shot.yaml` runs a single experiment config and logs to MLflow
-  - `python run_eval.py --run-all-experiments` runs every config in every `experiments/configs/` subdirectory sequentially and logs all results
-  - `python run_eval.py --mlflow-ui` launches the MLflow local UI (`mlflow ui`) so results can be browsed visually -- this is the dashboard experience for the optimization workflow
-
-- [ ] **14.10** Document in `leeg-eval/OPTIMIZATION.md`:
-  - The five optimization modalities and what levers exist in each
-  - How to add a new experiment config and what fields are required
-  - How to interpret the MLflow UI and the comparator output
-  - A decision tree for which modality to try first when eval scores are low (suggested order: prompt → retrieval → context → guard → inference)
-  - A note on interaction effects: why you optimize one modality at a time and why the combined config in 14.8 may not be the simple sum of individual wins
+| leeg-app step | leeg-eval equivalent |
+|---------------|----------------------|
+| 14.1 — MLflow infrastructure | [Phase 6](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment Tracking Infrastructure |
+| 14.2 — Prompt optimization | [Phase 7](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment: Prompt Optimization |
+| 14.3 — Retrieval optimization | [Phase 8](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment: Retrieval Optimization |
+| 14.4 — Context/compression optimization | [Phase 9](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment: Context & Compression Optimization |
+| 14.5 — Guard calibration | [Phase 10](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment: Guard Calibration |
+| 14.6 — Inference cost/performance | [Phase 11](../leeg-eval/PROJECT_CHECKLIST.md) — Experiment: Inference Cost & Performance |
+| 14.7–14.9 — Comparator, best config, CLI | [Phase 12](../leeg-eval/PROJECT_CHECKLIST.md) — Comparator & Optimization Synthesis |
+| 14.10 — Documentation | [Phase 13](../leeg-eval/PROJECT_CHECKLIST.md) — CI & Operational Tooling |
 
 ---
 

@@ -66,3 +66,7 @@ migrations/versions/__pycache__/
 
 # spaCy models (downloaded at build time)
 en_core_web_sm/
+
+# Project planning (local only)
+PROJECT_CHECKLIST.md
+CLAUDE.PROJECT.MD

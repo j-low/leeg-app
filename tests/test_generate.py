@@ -463,3 +463,264 @@ class TestAgentLoop:
             assert tool_result_turn["content"][0]["tool_use_id"] == "tu_check"
 
         asyncio.run(run())
+
+
+# ── TestStreamAgent ───────────────────────────────────────────────────────────
+
+class _MockStream:
+    """Simulates the anthropic streaming context manager."""
+
+    def __init__(self, texts: list[str], final_msg):
+        self._texts = texts
+        self._final_msg = final_msg
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    @property
+    def text_stream(self):
+        async def _gen():
+            for t in self._texts:
+                yield t
+        return _gen()
+
+    async def get_final_message(self):
+        return self._final_msg
+
+
+def _make_stream_text_msg(texts: list[str]) -> tuple[_MockStream, MagicMock]:
+    """Build a _MockStream whose final message is an end_turn text response."""
+    final_msg = _make_text_response(" ".join(texts), stop_reason="end_turn")
+    # Remove text blocks from content so tool extraction finds nothing
+    final_msg.content = []
+    return _MockStream(texts, final_msg), final_msg
+
+
+def _make_stream_tool_msg(tool_name: str, tool_input: dict, tool_id: str = "tu_s1") -> tuple[_MockStream, MagicMock]:
+    """Build a _MockStream whose final message is a tool_use stop."""
+    block = SimpleNamespace(type="tool_use", id=tool_id, name=tool_name, input=tool_input)
+    final_msg = MagicMock()
+    final_msg.stop_reason = "tool_use"
+    final_msg.content = [block]
+    final_msg.usage = SimpleNamespace(input_tokens=80, output_tokens=30)
+    return _MockStream([], final_msg), final_msg
+
+
+async def _collect_stream(gen):
+    events = []
+    async for e in gen:
+        events.append(e)
+    return events
+
+
+@pytest.mark.unit
+class TestStreamAgent:
+    """Unit tests for stream_agent() — the streaming variant of the ReAct loop."""
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_yields_answer_token_events(self):
+        """Text tokens emitted during streaming appear as answer_token events."""
+        mock_client = MagicMock()
+        stream_ctx, _ = _make_stream_text_msg(["Hello", " world"])
+        mock_client.messages.stream.return_value = stream_ctx
+
+        mock_db = AsyncMock()
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("system", "user")),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(QUERY_INPUT, RAG_CHUNKS, CTX, mock_db))
+
+        token_events = [e for e in events if e["type"] == "answer_token"]
+        assert len(token_events) == 2
+        texts = [e["text"] for e in token_events]
+        assert "Hello" in texts
+        assert " world" in texts
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_yields_tool_start_and_tool_result_events(self):
+        """tool_start event emitted before dispatch; tool_result after."""
+        mock_client = MagicMock()
+        tool_stream, _ = _make_stream_tool_msg("get_roster", {"team_id": 7})
+        text_stream, _ = _make_stream_text_msg(["Done."])
+
+        call_count = 0
+
+        def _stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return tool_stream if call_count == 1 else text_stream
+
+        mock_client.messages.stream.side_effect = _stream_side_effect
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.agent._get_client", return_value=mock_client),
+            patch("app.stages.generation.agent.render_prompt", return_value=("sys", "usr")),
+            patch("app.stages.generation.agent.dispatch_tool", new=AsyncMock(return_value={"players": []})),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(ATTENDANCE_INPUT, RAG_CHUNKS, CTX, mock_db))
+
+        types = [e["type"] for e in events]
+        assert "tool_start" in types
+        assert "tool_result" in types
+
+        tool_start = next(e for e in events if e["type"] == "tool_start")
+        assert tool_start["name"] == "get_roster"
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_yields_no_done_event(self):
+        """stream_agent does NOT yield a 'done' event — caller handles that."""
+        mock_client = MagicMock()
+        stream_ctx, _ = _make_stream_text_msg(["answer"])
+        mock_client.messages.stream.return_value = stream_ctx
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(QUERY_INPUT, [], CTX, mock_db))
+
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_respects_max_iterations(self):
+        """Loop terminates after MAX_ITERATIONS even with continuous tool_use stops."""
+        from app.stages.generation.agent import MAX_ITERATIONS
+
+        mock_client = MagicMock()
+        # Every LLM call returns a tool_use stop (infinite loop scenario)
+        tool_stream_factory = lambda: _make_stream_tool_msg("get_roster", {"team_id": 1}, "tu_x")[0]  # noqa: E731
+        mock_client.messages.stream.side_effect = lambda **kw: tool_stream_factory()
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+            patch("app.stages.generation.agent.dispatch_tool", new=AsyncMock(return_value={})),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(QUERY_INPUT, [], CTX, mock_db))
+
+        # Should have terminated — not hung forever
+        tool_start_events = [e for e in events if e["type"] == "tool_start"]
+        assert len(tool_start_events) <= MAX_ITERATIONS
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_timeout_yields_fallback_token(self):
+        """asyncio.TimeoutError during streaming yields a fallback answer_token."""
+        mock_client = MagicMock()
+
+        # Stream context that raises TimeoutError on entry
+        class _TimingOutStream:
+            async def __aenter__(self):
+                raise asyncio.TimeoutError()
+
+            async def __aexit__(self, *args):
+                pass
+
+        mock_client.messages.stream.return_value = _TimingOutStream()
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(QUERY_INPUT, [], CTX, mock_db))
+
+        token_texts = [e["text"] for e in events if e["type"] == "answer_token"]
+        assert any("too long" in t for t in token_texts)
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_tool_error_yields_error_result(self):
+        """Tool dispatch failure emits a tool_result with error payload."""
+        mock_client = MagicMock()
+        tool_stream, _ = _make_stream_tool_msg("get_roster", {"team_id": 1})
+        text_stream, _ = _make_stream_text_msg(["ok"])
+        call_n = {"n": 0}
+
+        def _side(**kw):
+            call_n["n"] += 1
+            return tool_stream if call_n["n"] == 1 else text_stream
+
+        mock_client.messages.stream.side_effect = _side
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+            patch("app.stages.generation.agent.dispatch_tool", new=AsyncMock(side_effect=RuntimeError("DB down"))),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(ATTENDANCE_INPUT, [], CTX, mock_db))
+
+        tool_result_events = [e for e in events if e["type"] == "tool_result"]
+        assert len(tool_result_events) >= 1
+        # The result should carry the error info
+        assert "error" in tool_result_events[0]["result"]
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_re_raises_non_timeout_exception(self):
+        """Non-TimeoutError exceptions propagate so pipeline can emit error event."""
+        mock_client = MagicMock()
+
+        class _BoomStream:
+            async def __aenter__(self):
+                raise RuntimeError("network failure")
+
+            async def __aexit__(self, *args):
+                pass
+
+        mock_client.messages.stream.return_value = _BoomStream()
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+        ):
+            from app.stages.generation.agent import stream_agent
+            with pytest.raises(RuntimeError, match="network failure"):
+                await _collect_stream(stream_agent(QUERY_INPUT, [], CTX, mock_db))
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_accumulates_multi_turn_tokens(self):
+        """Multiple answer_token events emitted across turns when tool calls are made."""
+        mock_client = MagicMock()
+        tool_stream, _ = _make_stream_tool_msg("get_roster", {"team_id": 1})
+
+        # Second turn yields text tokens
+        text_stream_ctx = _MockStream(["Part1", " Part2"], MagicMock())
+        text_stream_ctx._final_msg = MagicMock()
+        text_stream_ctx._final_msg.stop_reason = "end_turn"
+        text_stream_ctx._final_msg.content = []
+
+        call_n = {"n": 0}
+
+        def _side(**kw):
+            call_n["n"] += 1
+            return tool_stream if call_n["n"] == 1 else text_stream_ctx
+
+        mock_client.messages.stream.side_effect = _side
+        mock_db = AsyncMock()
+
+        with (
+            patch("app.stages.generation.generate._get_client", return_value=mock_client),
+            patch("app.stages.generation.prompts.render_prompt", return_value=("s", "u")),
+            patch("app.stages.generation.agent.dispatch_tool", new=AsyncMock(return_value={"players": []})),
+        ):
+            from app.stages.generation.agent import stream_agent
+            events = await _collect_stream(stream_agent(QUERY_INPUT, [], CTX, mock_db))
+
+        token_events = [e for e in events if e["type"] == "answer_token"]
+        token_texts = [e["text"] for e in token_events]
+        assert "Part1" in token_texts
+        assert " Part2" in token_texts

@@ -10,7 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.config import settings
 from app.limiter import limiter
 from app.observability import configure_observability, get_metrics_app
-from app.routes import auth, games, lineups, messaging, pipeline, players, seasons, sms, teams
+from app.routes import auth, chat, games, lineups, messaging, pipeline, players, seasons, sms, teams
 
 
 def create_app() -> FastAPI:
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(messaging.router)
     app.include_router(sms.router)
     app.include_router(pipeline.router)
+    app.include_router(chat.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

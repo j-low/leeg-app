@@ -1,0 +1,35 @@
+# Local development overrides — applied automatically by docker compose.
+# Provides hot-reload for API and frontend, removes resource limits, and
+# exposes the API URL as localhost (not the internal Docker network hostname).
+#
+# Do NOT commit secrets to this file. Use .env for those.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    deploy:
+      resources: {}
+
+  celery-worker:
+    volumes:
+      - ./app:/app/app
+    deploy:
+      resources: {}
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      # In dev, the browser hits the API directly on localhost (not via internal network)
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    deploy:
+      resources: {}

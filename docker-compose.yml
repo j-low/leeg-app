@@ -1,7 +1,7 @@
 services:
 
   # ── FastAPI application ────────────────────────────────────────────────────
-  app:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
@@ -22,6 +22,31 @@ services:
       redis:
         condition: service_healthy
       qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    restart: unless-stopped
+
+  # ── Next.js frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
         condition: service_healthy
     restart: unless-stopped
 
@@ -44,6 +69,11 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     restart: unless-stopped
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
@@ -62,6 +92,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped
 
   # ── Redis ──────────────────────────────────────────────────────────────────
@@ -76,6 +110,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     restart: unless-stopped
 
   # ── Qdrant vector database ─────────────────────────────────────────────────
@@ -109,7 +147,7 @@ services:
     restart: unless-stopped
 
   # ── Grafana ─────────────────────────────────────────────────────────────────
-  # Port 3001 — avoids conflict with Next.js (Phase 10) on 3000
+  # Port 3001 — avoids conflict with Next.js on 3000
   grafana:
     image: grafana/grafana:10.4.0
     environment:
