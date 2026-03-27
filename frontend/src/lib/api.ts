@@ -1,7 +1,6 @@
 // Typed fetch wrapper — attaches JWT and throws on non-2xx responses.
 
 import { getToken } from "./auth";
-import type { ApiError } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
