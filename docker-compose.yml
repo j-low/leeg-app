@@ -73,7 +73,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M
+          memory: 1G
     restart: unless-stopped
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ services:
       - "6333:6333"   # REST API
       - "6334:6334"   # gRPC
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
