@@ -24,16 +24,16 @@ All natural-language input — from SMS or the dashboard — is processed by a m
 
 ```
 SMS (Twilio) ──► FastAPI /sms/webhook ──► Celery task ──┐
-                                                         │
+                                                        │
 Dashboard (Next.js) ──► FastAPI REST/SSE ───────────────┤
-                                                         ▼
+                                                        ▼
                                                ┌──────────────────┐
-                                               │    AI Pipeline    │
+                                               │    AI Pipeline   │
                                                ├──────────────────┤
-                                               │ 1. Preprocess     │
-                                               │ 2. RAG            │
-                                               │ 3. Generate       │
-                                               │ 4. Postprocess    │
+                                               │ 1. Preprocess    │
+                                               │ 2. RAG           │
+                                               │ 3. Generate      │
+                                               │ 4. Postprocess   │
                                                └────────┬─────────┘
                                                         │
                                        ┌────────────────┼────────────────┐
